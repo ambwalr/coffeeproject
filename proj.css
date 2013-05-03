@@ -1,0 +1,21 @@
+body
+{
+background-color: gray;
+}
+
+svg
+{
+border: 2px inset #666;
+background-color: black;
+}
+
+form.panel
+{
+padding: 9pt;
+background-color: silver;
+border: 1px inset silver;
+width: 500px
+}
+form label{
+display: inline-block
+}
