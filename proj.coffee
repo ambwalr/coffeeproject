@@ -185,6 +185,31 @@ class Ballpit extends Primitive
     balls.forEach (ball) ->
       ball.draw()
 
+projectsize = ( pos, size ) ->
+  p=projectpoint pos
+  dist = p.z
+  zoom = camera.zoom
+  ratio=zoom/Math.sqrt(sq(size)+sq(dist))
+  projsize = size * ratio
+  return projsize
+
+class Target extends Primitive
+  constructor: (@pos, @size=0.5, @atts={}) ->
+  z: ->
+    p=projectpoint @pos
+    return p.z
+  draw: ->
+    p=projectpoint @pos
+    projsize = projectsize( @pos, @size )
+
+    @atts.x= p.x- projsize/2
+    @atts.y= p.y - projsize/2
+    
+    @atts.width = Math.ceil projsize
+    @atts.height = Math.ceil projsize
+    @atts["xlink:href"] = "images/Nopenis.svg"
+    out tag "image",@atts
+
 class Group extends Primitive
   constructor: (@children=[]) ->
   draw: ->
@@ -276,6 +301,9 @@ world.addobj new Polyline [ V( 1,1,1 ), V( 1,-1,1 ), V( -1,1,1 ), V( -1,-1,1 ), 
 scenes.push world=new World
 world.addobj new Ballpit [0..50].map randpoint
 
+scenes.push world=new World
+world.addobjs [0..10].map -> new Target randpoint()
+
 now = -> new Date().getTime()
 
 svgdraw = ->
@@ -333,12 +361,9 @@ spin = ->
 chk = $ tag "input",{type:"checkbox"}
 form.append $(label "spin").prepend chk
 chk.change ->
-  console.log this.checked
   if this.checked
-    console.log "chk"
     spin()
   else
-    console.log "unchk"
     clearTimeout(timer)
 
 form.append $(label "zoom").prepend tagslider(10,500).change -> camera.setzoom parseFloat this.value
