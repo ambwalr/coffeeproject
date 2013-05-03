@@ -1,17 +1,3 @@
-###
-amb's vector library
- Commercial use licenses can be paid for in coke
-
-EULA TERMS:
- 1. you consent to me claiming any or all of your legal property,
- as many times as I want, at any time of my choosing for the indefinite future
- 2. if ever prompted to, you will shout my name while chasing a duck
-
-If you agree to these terms, continue downloading this bitstream past this point.
-
-Thank you, your agreement has been noted
-###
-
 class Vector
   constructor: (@x,@y,@z) ->
 
