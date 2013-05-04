@@ -1,7 +1,8 @@
 coffeeproject
 =============
 
-browser based 3d projection in coffeescript/svg
+Browser-based 3d projection in coffeescript/svg.
 
-requires jquery and coffeescript.js
+Probably only works in Webkit-based browsers.
+Requires jquery and coffeescript.js
 
