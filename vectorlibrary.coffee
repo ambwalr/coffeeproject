@@ -48,8 +48,8 @@ Vector::mag = ->
 Vector::norm = -> @ndiv @mag() 
 Vector::dist = (v) -> @sub(v).mag()
 
-Vector::dot2d = (a,b) -> a.x*b.x + a.y*b.y
-Vector::dot3d = (a,b) -> a.x*b.x + a.y*b.y + a.z*b.z
+Vector::dot2d = (b) -> @x*b.x + @y*b.y
+Vector::dot3d = (b) -> @x*b.x + @y*b.y + @z*b.z
 
 @_VectorLib = {
 V: V
