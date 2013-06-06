@@ -69,6 +69,20 @@ firebullet = (from,to) ->
   fromloc = V from.x, from.y
   toloc = V to.x, to.y
   trace = new Tracer( fromloc, toloc )
+
+  allLineDefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
+  
+  #allLineDefs.forEach (linedef) ->
+  #  console.log getLineIntersection( trace, linedef )
+  results = ( getLineIntersection( trace, linedef ) for linedef in allLineDefs )
+  intersections = results.filter (n) -> n isnt null
+  # now we have all wall collisions yo
+  if intersections.length > 0
+    firsthit = intersections.reduce ( prev, curr ) ->
+      if fromloc.dist(prev) > fromloc.dist(curr)
+        return curr
+      else return prev
+    trace = new Tracer( trace.loc , firsthit )
   
   allactors = gameworld.entitylist.filter (ent) -> ent instanceof Enemy
 
@@ -271,6 +285,35 @@ class Camera
     camloc= dude.loc.sub size.ndiv 2
     return camloc
 cam = new Camera
+
+#based on an implementation by cortijon
+getLineIntersection = ( linea, lineb ) ->
+  p0_x = linea.loc.x
+  p0_y = linea.loc.y
+  p1_x = linea.to.x
+  p1_y = linea.to.y
+  p2_x = lineb.loc.x
+  p2_y = lineb.loc.y
+  p3_x = lineb.to.x
+  p3_y = lineb.to.y
+  result=jsgetLineIntersection(p0_x, p0_y, p1_x, p1_y, p2_x, p2_y, p3_x, p3_y)
+  if result isnt null
+    result = V result[0],result[1]
+  return result
+
+jsgetLineIntersection = (p0_x, p0_y, p1_x, p1_y, p2_x, p2_y, p3_x, p3_y) ->
+  s1_x = p1_x - p0_x;
+  s1_y = p1_y - p0_y;
+  s2_x = p3_x - p2_x;
+  s2_y = p3_y - p2_y;
+  s = (-s1_y * (p0_x - p2_x) + s1_x * (p0_y - p2_y)) / (-s2_x * s1_y + s1_x * s2_y);
+  t = ( s2_x * (p0_y - p2_y) - s2_y * (p0_x - p2_x)) / (-s2_x * s1_y + s1_x * s2_y);
+  if (s >= 0 && s <= 1 && t >= 0 && t <= 1)
+  #Collision detected
+    intX = p0_x + (t * s1_x);
+    intY = p0_y + (t * s1_y);
+    return [intX, intY];
+  return null; #No collision
 
 #based on an implementation by metamal on stackoverflow
 HitboxRayIntersect = ( rect, line ) ->
