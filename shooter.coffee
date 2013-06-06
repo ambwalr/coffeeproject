@@ -17,38 +17,44 @@ flush = () ->
   output.append outputqueue.join()
   outputqueue = []
 
-bindings=[]
+holdbindings=[]
+tapbindings=[]
 
 tapkeylistener = (e) ->
   key=e.keyCode
   charkey = String.fromCharCode(key)
-  console.log e
-  funct = bindings[charkey]
+  funct = tapbindings[charkey]
   if funct
     funct()
 tickcalls = []
 holdkeylistener = (e) ->
   key=e.keyCode
   charkey = String.fromCharCode(key)
-  console.log e
-  funct = bindings[charkey]
+  funct = holdbindings[charkey]
   if funct and funct not in tickcalls
     tickcalls.push funct
-  console.log tickcalls
 releasekeylistener = (e) ->
   key=e.keyCode
   charkey = String.fromCharCode(key)
-  funct = bindings[charkey]
+  funct = holdbindings[charkey]
   if funct and funct in tickcalls
     tickcalls.splice tickcalls.indexOf(funct), 1
 
+body.bind('keydown',{}, tapkeylistener )
 body.bind('keydown',{}, holdkeylistener )
 body.bind('keyup',{}, releasekeylistener )
+
+#(mobile) devices with accelerometer
+accellistener = (e) ->
+  acc=e.accelerationIncludingGravity
+  dude.vel = dude.vel.add V( acc.x, -acc.y ).ndiv 2
+
+window.ondevicemotion = accellistener
+
 
 mouselistener = (e) ->
   bulletrange = 200
   clickpoint = V e.offsetX, e.offsetY
-  console.log clickpoint
   console.log cam.loc()
   clickpoint = clickpoint.add cam.loc()
   
@@ -62,8 +68,25 @@ mouselistener = (e) ->
 
 output.bind('mousedown',{}, mouselistener )
 
-keybind = (key,funct) ->
-  bindings[key]=funct
+keyholdbind = (key,funct) ->
+  holdbindings[key]=funct
+keytapbind = (key,funct) ->
+  tapbindings[key]=funct
+
+ricochet = ( v, n ) ->
+  # projectile of velocity v
+  # wall with surface normal n
+  #split v into components u perpendicular to the wall and w parallel to it
+  #u=(v*n/n*n)n
+  u = n.nmul v.dot2d(n) / n.dot2d(n)
+  #w=v-u
+  w = v.sub u
+  # friction f
+  # coefficient of restitution r
+  # v' = f w - r u
+  vprime = w.sub u
+  return vprime
+
 
 firebullet = (from,to) ->
   fromloc = V from.x, from.y
@@ -140,7 +163,12 @@ class LineDef extends Entity
       hitbool = HitboxRayIntersect( hitbox, @ )
       if hitbool
         bleed V target.loc.x, target.loc.y
-        target.vel = target.vel.nmul -1.5
+        normal = @to.sub(@loc).norm()
+        normal = V -normal.y, normal.x
+        target.vel = ricochet target.vel, normal
+        #force an extra move
+        #possibly helps avoid getting stuck in walls?
+        target.loc = target.loc.add target.vel.nmul 2
         gameworld.addent hitbox
   
   draw: () ->
@@ -219,10 +247,17 @@ south = ->
   dude.move(0,1)
 east = ->
   dude.move(1,0)
-keybind 'W', north
-keybind 'A', west
-keybind 'S', south
-keybind 'D', east
+
+reset = ->
+  console.log "supposed to be resetting now"
+  gameworld.reset()
+
+keyholdbind 'W', north
+keyholdbind 'A', west
+keyholdbind 'S', south
+keyholdbind 'D', east
+keytapbind 'R', reset
+
 
 
 #GEOMETRY
@@ -258,7 +293,8 @@ class World
   
   addent: ( ent ) ->
     @entitylist.push ent
-  
+  reset: ->
+    @constructor()
   render: ->
     output.html('')
     
