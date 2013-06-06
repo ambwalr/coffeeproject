@@ -47,7 +47,9 @@ body.bind('keyup',{}, releasekeylistener )
 #(mobile) devices with accelerometer
 accellistener = (e) ->
   acc=e.accelerationIncludingGravity
-  dude.vel = dude.vel.add V( acc.x, -acc.y ).ndiv 2
+  accv = V acc.x, -acc.y
+  if accv.mag()>2
+    dude.vel = dude.vel.add accv.ndiv 2
 
 window.ondevicemotion = accellistener
 
