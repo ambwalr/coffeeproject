@@ -53,15 +53,12 @@ accellistener = (e) ->
 
 window.ondevicemotion = accellistener
 
-
 mouselistener = (e) ->
   bulletrange = 200
   clickpoint = V e.offsetX, e.offsetY
-  console.log cam.loc()
+  console.log e
   clickpoint = clickpoint.add cam.loc()
   
-  #random spread
-  clickpoint = clickpoint.add randompoint().nsub(.5).nmul(10)
 
   aimdirection = clickpoint.sub(dude.loc).norm()
   
@@ -98,7 +95,6 @@ firebullet = (from,to) ->
   allLineDefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
   
   #allLineDefs.forEach (linedef) ->
-  #  console.log getLineIntersection( trace, linedef )
   results = ( getLineIntersection( trace, linedef ) for linedef in allLineDefs )
   intersections = results.filter (n) -> n isnt null
   # now we have all wall collisions yo
@@ -117,7 +113,14 @@ firebullet = (from,to) ->
     hitbool= HitboxRayIntersect hitbox, trace
     if hitbool
       ent.damage 1
-      bleed V ent.loc.x, ent.loc.y
+      tracenormal = trace.to.sub(trace.loc).norm()
+      ent.vel = ent.vel.add tracenormal.nmul 2
+      bleed tracenormal.add randompoint().nsub(0.5).nmul(10).add V ent.loc.x, ent.loc.y
+      bleed tracenormal.add randompoint().nsub(0.5).nmul(10).add V ent.loc.x, ent.loc.y
+      bleed tracenormal.add randompoint().nsub(0.5).nmul(10).add V ent.loc.x, ent.loc.y
+      bleed tracenormal.add randompoint().nsub(0.5).nmul(10).add V ent.loc.x, ent.loc.y
+
+
       gameworld.addent hitbox
 
   gameworld.addent trace
@@ -164,7 +167,6 @@ class LineDef extends Entity
       hitbox = new Square target.loc.nsub(targetsize), target.loc.nadd(targetsize)
       hitbool = HitboxRayIntersect( hitbox, @ )
       if hitbool
-        bleed V target.loc.x, target.loc.y
         normal = @to.sub(@loc).norm()
         normal = V -normal.y, normal.x
         target.vel = ricochet target.vel, normal
@@ -183,7 +185,7 @@ class Blood extends Entity
     "<circle r=4 cx=#{@loc.x} cy=#{@loc.y} fill=red/>"
   tick: () ->
     @age++
-    if @age > 4
+    if @age > 100
       @kill()
 bleed = ( loc ) ->
   blood=new Blood(loc)
@@ -226,13 +228,57 @@ class Player extends Actor
 randompoint = ->
   return V Math.random(), Math.random()
 
+maketracer = (from,to) ->
+  fromloc = V from.x, from.y
+  toloc = V to.x, to.y
+  trace = new Tracer( fromloc, toloc )
+
+  allLineDefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
+  
+  #allLineDefs.forEach (linedef) ->
+  results = ( getLineIntersection( trace, linedef ) for linedef in allLineDefs )
+  intersections = results.filter (n) -> n isnt null
+  # now we have all wall collisions yo
+  if intersections.length > 0
+    firsthit = intersections.reduce ( prev, curr ) ->
+      if fromloc.dist(prev) > fromloc.dist(curr)
+        return curr
+      else return prev
+    trace = new Tracer( trace.loc , firsthit )
+  
+  allactors = gameworld.entitylist.filter (ent) -> ent instanceof Enemy
+
+  allactors.forEach (ent) ->
+    targetsize = 8
+    hitbox = new Square ent.loc.nsub(targetsize), ent.loc.nadd(targetsize)
+    hitbool= HitboxRayIntersect hitbox, trace
+    if hitbool
+      ent.damage 1
+      bleed V ent.loc.x, ent.loc.y
+      gameworld.addent hitbox
+
+  gameworld.addent trace
+haslineofsight = ( entA, entB ) ->
+  if entA.loc.dist(entB.loc) < 100
+    return true
+  else
+    return false
+
 class Enemy extends Actor
   constructor: () ->
     super()
     @loc=randompoint().nmul 200
     @vel= V 1, 1
   draw: () ->
-    return "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"
+    basic = "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"
+    size = V 20, 20
+    loc = @loc.sub size.ndiv 2 #center
+    alert = "<image height=#{size.x} width=#{size.y} xlink:href='images/exclamation.svg' x=#{loc.x} y=#{loc.y} />"
+    if haslineofsight( @, dude )
+      return basic + alert
+    else
+      return basic
+
   tick: () ->
     @jostle()
     super()
@@ -260,7 +306,12 @@ keyholdbind 'S', south
 keyholdbind 'D', east
 keytapbind 'R', reset
 
+dudeangle = 0
+turnleft = -> dudeangle+=3
+turnright = -> dudeangle-=3
 
+keyholdbind 'H', turnleft
+keyholdbind 'L', turnright
 
 #GEOMETRY
 class Point
@@ -300,15 +351,16 @@ class World
   render: ->
     output.html('')
     
-    camloc= cam.loc()
+    camloc = cam.loc()
     size = cam.size()
 
-    out "<svg width=640 height=480 viewbox='"+camloc.x+" "+camloc.y+" "+size.x+" "+size.y+"'>"
-
+    out "<svg id='screenout' width=640 height=480 viewbox='"+camloc.x+" "+camloc.y+" "+size.x+" "+size.y+"'>"
+    out "<g transform='rotate(#{dudeangle},#{dude.loc.x},#{dude.loc.y})'>"
      
     @entitylist.forEach( (ent) ->
       out ent.draw()
     )
+    out "</g>"
     out "</svg>"
     flush()
   
