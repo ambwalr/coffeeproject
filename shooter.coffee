@@ -17,6 +17,15 @@ flush = () ->
   output.append outputqueue.join()
   outputqueue = []
 
+#xml generation
+tagatts = (attobj) ->
+  attstr=""
+  for k,v of attobj
+    attstr += " #{k}=\"#{v}\""
+  attstr
+tag = (type,att,body="") ->
+  return "<#{type} #{tagatts att}>#{body}</#{type}>"
+
 holdbindings=[]
 tapbindings=[]
 
@@ -53,17 +62,19 @@ accellistener = (e) ->
 
 window.ondevicemotion = accellistener
 
+spraybullets = ( loc, end, num ) ->
+  [1..num].forEach -> firebullet loc,end
+
 mouselistener = (e) ->
   bulletrange = 200
   clickpoint = V e.offsetX, e.offsetY
   console.log e
   clickpoint = clickpoint.add cam.loc()
   
-
   aimdirection = clickpoint.sub(dude.loc).norm()
   
   endpoint = dude.loc.add aimdirection.nmul bulletrange
-  firebullet( dude.loc, endpoint )
+  spraybullets( dude.loc, endpoint, 6 )
 
 output.bind('mousedown',{}, mouselistener )
 
@@ -86,10 +97,23 @@ ricochet = ( v, n ) ->
   vprime = w.sub u
   return vprime
 
+bloodspray = ( location, velocity ) ->
+  bleed location.add velocity.mul(randompoint())
+  bleed location.add velocity.mul(randompoint())
+  bleed location.add velocity.mul(randompoint())
+  bleed location.add velocity.mul(randompoint())
+
+bullethit = ( ent, trace ) ->
+  ent.damage 1
+  tracenormal = trace.to.sub(trace.loc).norm()
+  #bullets send dudes flying back FOR EXTRA REALISM
+  ent.vel = ent.vel.add tracenormal.nmul 2
+  bloodspray ent.loc, tracenormal.nmul 30
 
 firebullet = (from,to) ->
   fromloc = V from.x, from.y
   toloc = V to.x, to.y
+  toloc = toloc.add randompoint().nsub(1/2).nmul 50
   trace = new Tracer( fromloc, toloc )
 
   allLineDefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
@@ -112,15 +136,7 @@ firebullet = (from,to) ->
     hitbox = new Square ent.loc.nsub(targetsize), ent.loc.nadd(targetsize)
     hitbool= HitboxRayIntersect hitbox, trace
     if hitbool
-      ent.damage 1
-      tracenormal = trace.to.sub(trace.loc).norm()
-      ent.vel = ent.vel.add tracenormal.nmul 2
-      bleed tracenormal.add randompoint().nsub(0.5).nmul(10).add V ent.loc.x, ent.loc.y
-      bleed tracenormal.add randompoint().nsub(0.5).nmul(10).add V ent.loc.x, ent.loc.y
-      bleed tracenormal.add randompoint().nsub(0.5).nmul(10).add V ent.loc.x, ent.loc.y
-      bleed tracenormal.add randompoint().nsub(0.5).nmul(10).add V ent.loc.x, ent.loc.y
-
-
+      bullethit ent, trace
       gameworld.addent hitbox
 
   gameworld.addent trace
@@ -193,7 +209,7 @@ bleed = ( loc ) ->
 
 class Actor extends Entity
   constructor: ( @loc=V(0,0) ) ->
-    @health = 3
+    @health = 10
     @vel= V 0,0
   draw: () ->
     return "<circle fill=magenta r=10 cx=#{@loc.x} cy=#{@loc.y} />"
@@ -271,15 +287,20 @@ class Enemy extends Actor
     @vel= V 1, 1
   draw: () ->
     basic = "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"
-    size = V 20, 20
-    loc = @loc.sub size.ndiv 2 #center
-    alert = "<image height=#{size.x} width=#{size.y} xlink:href='images/exclamation.svg' x=#{loc.x} y=#{loc.y} />"
     if haslineofsight( @, dude )
+      size = V 20, 20
+      loc = @loc.sub size.ndiv 2 #center
+      atts = height:size.x, width:size.y, 'xlink:href':'images/exclamation.svg', x:loc.x, y:loc.y
+      alert = tag "image", atts
       return basic + alert
     else
       return basic
 
   tick: () ->
+    target = dude
+    if haslineofsight( @, target) and Math.random()*100 < 1
+      firebullet( @loc, dude.loc )
+    
     @jostle()
     super()
   jostle: () ->
@@ -312,6 +333,17 @@ turnright = -> dudeangle-=3
 
 keyholdbind 'H', turnleft
 keyholdbind 'L', turnright
+
+blam = ->
+  console.log dudeangle
+  augh = (dudeangle/360)*Math.PI*2
+  aimdirection = V Math.sin( augh ), Math.cos( augh )
+  console.log aimdirection
+  bulletrange = 200
+  endpoint = dude.loc.sub aimdirection.nmul bulletrange
+  spraybullets( dude.loc, endpoint, 6 )
+
+keytapbind 'B', blam
 
 #GEOMETRY
 class Point
