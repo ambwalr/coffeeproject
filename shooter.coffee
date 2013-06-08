@@ -62,19 +62,14 @@ accellistener = (e) ->
 
 window.ondevicemotion = accellistener
 
-spraybullets = ( loc, end, num ) ->
-  [1..num].forEach -> firebullet loc,end
+entspraybullets = ( ent, dir, num ) ->
+  [1..num].forEach -> entfirebullet ent,dir
 
 mouselistener = (e) ->
-  bulletrange = 200
   clickpoint = V e.offsetX, e.offsetY
-  console.log e
   clickpoint = clickpoint.add cam.loc()
-  
   aimdirection = clickpoint.sub(dude.loc).norm()
-  
-  endpoint = dude.loc.add aimdirection.nmul bulletrange
-  spraybullets( dude.loc, endpoint, 6 )
+  entspraybullets dude, aimdirection, 6
 
 output.bind('mousedown',{}, mouselistener )
 
@@ -110,9 +105,12 @@ bullethit = ( ent, trace ) ->
   ent.vel = ent.vel.add tracenormal.nmul 2
   bloodspray ent.loc, tracenormal.nmul 30
 
-firebullet = (from,to) ->
-  fromloc = V from.x, from.y
-  toloc = V to.x, to.y
+entfirebullet = ( ent, dir ) ->
+  bulletrange = 200
+
+  fromloc = ent.loc.nadd 0
+  toloc = fromloc.add dir.norm().nmul bulletrange
+  #some scatter
   toloc = toloc.add randompoint().nsub(1/2).nmul 50
   trace = new Tracer( fromloc, toloc )
 
@@ -129,9 +127,9 @@ firebullet = (from,to) ->
       else return prev
     trace = new Tracer( trace.loc , firsthit )
   
-  allactors = gameworld.entitylist.filter (ent) -> ent instanceof Enemy
-
-  allactors.forEach (ent) ->
+  allactors = gameworld.entitylist.filter (ent) -> ent instanceof Actor
+  targets = allactors.filter (actor) -> actor isnt ent
+  targets.forEach (ent) ->
     targetsize = 8
     hitbox = new Square ent.loc.nsub(targetsize), ent.loc.nadd(targetsize)
     hitbool= HitboxRayIntersect hitbox, trace
@@ -170,7 +168,7 @@ class Tracer extends Entity
     if @age > 4
       @kill()
   draw: () ->
-    "<line x1=#{@loc.x} y1=#{@loc.y} x2=#{@to.x} y2=#{@to.y} stroke=black/>"
+    "<line x1=#{@loc.x} y1=#{@loc.y} x2=#{@to.x} y2=#{@to.y} stroke=black stroke-dasharray='2,3'/>"
 
 class LineDef extends Entity
   constructor: (@loc, @to) ->
@@ -186,7 +184,7 @@ class LineDef extends Entity
         normal = @to.sub(@loc).norm()
         normal = V -normal.y, normal.x
         target.vel = ricochet target.vel, normal
-        #force an extra move
+	#force an extra move
         #possibly helps avoid getting stuck in walls?
         target.loc = target.loc.add target.vel.nmul 2
         gameworld.addent hitbox
@@ -211,6 +209,11 @@ class Actor extends Entity
   constructor: ( @loc=V(0,0) ) ->
     @health = 10
     @vel= V 0,0
+    @dir = 0
+  draworientation: () ->
+    normal = angletonorm @dir
+    loc = @loc.add normal.nmul 12
+    return "<circle fill=black r=3 cx=#{loc.x} cy=#{loc.y} />"
   draw: () ->
     return "<circle fill=magenta r=10 cx=#{@loc.x} cy=#{@loc.y} />"
 
@@ -231,10 +234,12 @@ class Actor extends Entity
 class Player extends Actor
 
   constructor: () ->
+    super()
     @vel= V 0,1
     @loc= V 10,20
   draw: () ->
-    return "<circle fill=orange r=10 cx=#{@loc.x} cy=#{@loc.y} />"
+    o = @draworientation()
+    return "<circle fill=orange r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
   tick: () ->
     @movetick()
   move: (x,y) ->
@@ -280,13 +285,20 @@ haslineofsight = ( entA, entB ) ->
   else
     return false
 
+
+normtoangle = ( vec ) -> Math.atan2( vec.x, vec.y  )*180/Math.PI
+angletonorm = ( degs ) ->
+  augh = (degs/360)*Math.PI*2
+  return V(0,0).sub V Math.sin( augh ), Math.cos( augh )
+
 class Enemy extends Actor
   constructor: () ->
     super()
     @loc=randompoint().nmul 200
     @vel= V 1, 1
   draw: () ->
-    basic = "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"
+    o = @draworientation()
+    basic = "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
     if haslineofsight( @, dude )
       size = V 20, 20
       loc = @loc.sub size.ndiv 2 #center
@@ -298,13 +310,19 @@ class Enemy extends Actor
 
   tick: () ->
     target = dude
-    if haslineofsight( @, target) and Math.random()*100 < 1
-      firebullet( @loc, dude.loc )
+    spotted = haslineofsight @, target
+    if spotted
+      norm = @loc.sub(target.loc).norm()
+      @dir=normtoangle norm
+    if spotted and Math.random()*100 < 1
+      entfirebullet @, dude.loc.sub(@loc).norm()
     
     @jostle()
     super()
   jostle: () ->
+    @dir = @dir-1+Math.random() * 3
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
+    @vel = @vel.add angletonorm(@dir).ndiv 50
 
 dude = new Player()
 
@@ -335,13 +353,8 @@ keyholdbind 'H', turnleft
 keyholdbind 'L', turnright
 
 blam = ->
-  console.log dudeangle
-  augh = (dudeangle/360)*Math.PI*2
-  aimdirection = V Math.sin( augh ), Math.cos( augh )
-  console.log aimdirection
-  bulletrange = 200
-  endpoint = dude.loc.sub aimdirection.nmul bulletrange
-  spraybullets( dude.loc, endpoint, 6 )
+  aimdirection = angletonorm dudeangle
+  entspraybullets dude, aimdirection, 6
 
 keytapbind 'B', blam
 
