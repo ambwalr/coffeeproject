@@ -69,6 +69,7 @@ mouselistener = (e) ->
   clickpoint = V e.offsetX, e.offsetY
   clickpoint = clickpoint.add cam.loc()
   aimdirection = clickpoint.sub(dude.loc).norm()
+  firetracer dude.loc, aimdirection
   entspraybullets dude, aimdirection, 6
 
 output.bind('mousedown',{}, mouselistener )
@@ -77,78 +78,6 @@ keyholdbind = (key,funct) ->
   holdbindings[key]=funct
 keytapbind = (key,funct) ->
   tapbindings[key]=funct
-
-ricochet = ( v, n ) ->
-  # projectile of velocity v
-  # wall with surface normal n
-  #split v into components u perpendicular to the wall and w parallel to it
-  #u=(v*n/n*n)n
-  u = n.nmul v.dot2d(n) / n.dot2d(n)
-  #w=v-u
-  w = v.sub u
-  # friction f
-  # coefficient of restitution r
-  # v' = f w - r u
-  vprime = w.sub u
-  return vprime
-
-bloodspray = ( location, velocity ) ->
-  bleed location.add velocity.mul(randompoint())
-  bleed location.add velocity.mul(randompoint())
-  bleed location.add velocity.mul(randompoint())
-  bleed location.add velocity.mul(randompoint())
-
-bullethit = ( ent, trace ) ->
-  ent.damage 1
-  tracenormal = trace.to.sub(trace.loc).norm()
-  #bullets send dudes flying back FOR EXTRA REALISM
-  ent.vel = ent.vel.add tracenormal.nmul 2
-  bloodspray ent.loc, tracenormal.nmul 30
-
-entfirebullet = ( ent, dir ) ->
-  bulletrange = 200
-
-  fromloc = ent.loc.nadd 0
-  toloc = fromloc.add dir.norm().nmul bulletrange
-  #some scatter
-  toloc = toloc.add randompoint().nsub(1/2).nmul 50
-  trace = new Tracer( fromloc, toloc )
-
-  allLineDefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
-  
-  #allLineDefs.forEach (linedef) ->
-  results = ( getLineIntersection( trace, linedef ) for linedef in allLineDefs )
-  intersections = results.filter (n) -> n isnt null
-  # now we have all wall collisions yo
-  if intersections.length > 0
-    firsthit = intersections.reduce ( prev, curr ) ->
-      if fromloc.dist(prev) > fromloc.dist(curr)
-        return curr
-      else return prev
-    trace = new Tracer( trace.loc , firsthit )
-  
-  allactors = gameworld.entitylist.filter (ent) -> ent instanceof Actor
-  targets = allactors.filter (actor) -> actor isnt ent
-  targets.forEach (ent) ->
-    targetsize = 8
-    hitbox = new Square ent.loc.nsub(targetsize), ent.loc.nadd(targetsize)
-    hitbool= HitboxRayIntersect hitbox, trace
-    if hitbool
-      bullethit ent, trace
-      gameworld.addent hitbox
-
-  gameworld.addent trace
-
-closestEntity = ( vector ) ->
-  minDist = 1000
-  closest = 0
-  gameworld.entitylist.forEach (entity) ->
-    dist = vector.dist entity.loc
-    if dist < minDist
-      closest = entity
-      minDist = dist
-
-  return closest
 
 class Entity
   loc=V 0,0
@@ -160,52 +89,29 @@ class Entity
     at = gameworld.entitylist.indexOf @
     gameworld.entitylist.splice at, 1
 
-class Tracer extends Entity
-  constructor: (@loc, @to) ->
-    @age = 0
-  tick: () ->
-    @age++
-    if @age > 4
-      @kill()
-  draw: () ->
-    "<line x1=#{@loc.x} y1=#{@loc.y} x2=#{@to.x} y2=#{@to.y} stroke=black stroke-dasharray='2,3'/>"
+class MovingEnt extends Entity
 
-class LineDef extends Entity
-  constructor: (@loc, @to) ->
-  tick: () ->
-    allactors = gameworld.entitylist.filter (ent) -> ent instanceof Actor
-
-    allactors.forEach (ent) =>
-      target = ent
-      targetsize = 8
-      hitbox = new Square target.loc.nsub(targetsize), target.loc.nadd(targetsize)
-      hitbool = HitboxRayIntersect( hitbox, @ )
-      if hitbool
-        normal = @to.sub(@loc).norm()
-        normal = V -normal.y, normal.x
-        target.vel = ricochet target.vel, normal
-	#force an extra move
-        #possibly helps avoid getting stuck in walls?
-        target.loc = target.loc.add target.vel.nmul 2
-        gameworld.addent hitbox
-  
-  draw: () ->
-    "<line x1=#{@loc.x} y1=#{@loc.y} x2=#{@to.x} y2=#{@to.y} stroke=brown stroke-width=4px />"
-
-class Blood extends Entity
-  constructor: (@loc) ->
+class Blood extends MovingEnt
+  constructor: ( @loc, @vel ) ->
     @age = 0
   draw: () ->
     "<circle r=4 cx=#{@loc.x} cy=#{@loc.y} fill=red/>"
   tick: () ->
+    @loc = @loc.add @vel
+    friction = 0.5
+    @vel = @vel.nmul friction
     @age++
     if @age > 100
       @kill()
-bleed = ( loc ) ->
-  blood=new Blood(loc)
+bleed = ( loc, vel ) ->
+  blood = new Blood loc, vel
   gameworld.addent(blood)
+Blood::gethitbox = () ->
+  targetsize = 4
+  hitbox = new Square @loc.nsub(targetsize), @loc.nadd(targetsize)
+  return hitbox
 
-class Actor extends Entity
+class Actor extends MovingEnt
   constructor: ( @loc=V(0,0) ) ->
     @health = 10
     @vel= V 0,0
@@ -231,12 +137,145 @@ class Actor extends Entity
     @vel = @vel.nmul friction
     @loc = newv
 
+
+class Tracer extends Entity
+  constructor: (@loc, @to) ->
+    @age = 0
+  tick: () ->
+    @age++
+    if @age > 4
+      @kill()
+  draw: () ->
+    "<line x1=#{@loc.x} y1=#{@loc.y} x2=#{@to.x} y2=#{@to.y} stroke=black stroke-dasharray='2,3'/>"
+
+ricochet = ( v, n ) ->
+  # projectile of velocity v
+  # wall with surface normal n
+  #split v into components u perpendicular to the wall and w parallel to it
+  #u=(v*n/n*n)n
+  u = n.nmul v.dot2d(n) / n.dot2d(n)
+  #w=v-u
+  w = v.sub u
+  # friction f
+  # coefficient of restitution r
+  # v' = f w - r u
+  vprime = w.sub u
+  return vprime
+
+bloodspray = ( loc, vel ) ->
+  bleed loc, vel.mul randompoint()
+  bleed loc, vel.mul randompoint()
+  bleed loc, vel.mul randompoint()
+  bleed loc, vel.mul randompoint()
+  #velocity.mul( Math.random() )
+
+bullethit = ( ent, trace ) ->
+  ent.damage 1
+  tracenormal = trace.to.sub(trace.loc).norm()
+  #bullets send dudes flying back FOR EXTRA REALISM
+  ent.vel = ent.vel.add tracenormal.nmul 2
+  bloodspray ent.loc, tracenormal.nmul 30
+
+Actor::gethitbox = () ->
+  targetsize = 8
+  hitbox = new Square @loc.nsub(targetsize), @loc.nadd(targetsize)
+  return hitbox
+
+Tracer::checkEnts = ( entities ) ->
+  entities.filter (ent) =>
+    hitbox = ent.gethitbox()
+    hitbool = HitboxRayIntersect hitbox, @
+    return hitbool
+
+firetracer = ( fromloc, dir ) ->
+  tracerange = 2000
+  toloc = fromloc.add dir.norm().nmul tracerange
+  trace = new Tracer( fromloc, toloc )
+  allLineDefs = gameworld.getLineDefs()
+  results = ( getLineIntersection( trace, linedef ) for linedef in allLineDefs )
+  intersections = results.filter (n) -> n isnt null
+  # now we have all wall collisions yo
+  if intersections.length > 0
+    firsthit = intersections.reduce ( prev, curr ) ->
+      if fromloc.dist(prev) > fromloc.dist(curr)
+        return curr
+      else return prev
+    trace = new Tracer( trace.loc , firsthit )
+  return trace
+
+getTargets = () -> return gameworld.entitylist.filter (ent) -> ent instanceof Enemy
+
+firebullet = ( fromloc, dir ) ->
+  targets = getTargets()
+  #some scatter
+  dir = dir.add( randompoint().nsub(1/2).ndiv(200) ).norm()
+  trace = firetracer fromloc, dir
+  
+  targets = allactors
+  targets.forEach (ent) ->
+    targetsize = 8
+    hitbox = new Square ent.loc.nsub(targetsize), ent.loc.nadd(targetsize)
+    hitbool= HitboxRayIntersect hitbox, trace
+    if hitbool
+      bullethit ent, trace
+
+  gameworld.addent trace
+
+entfirebullet = ( ent, dir ) ->
+  bulletrange = 200
+
+  fromloc = ent.loc.nadd 0
+  #some scatter
+  dir = dir.add( randompoint().nsub(1/2).ndiv(4) ).norm()
+  trace = firetracer fromloc, dir
+
+  allactors = gameworld.entitylist.filter (ent) -> ent instanceof Actor
+  targets = allactors.filter (actor) -> actor isnt ent
+  hits = trace.checkEnts targets
+  hits.forEach (hitent) ->
+    bullethit hitent, trace
+  gameworld.addent trace
+
+closestEntity = ( vector ) ->
+  minDist = 1000
+  closest = 0
+  gameworld.entitylist.forEach (entity) ->
+    dist = vector.dist entity.loc
+    if dist < minDist
+      closest = entity
+      minDist = dist
+
+  return closest
+
+class LineDef extends Entity
+  constructor: (@loc, @to) ->
+  tick: () ->
+    allactors = gameworld.entitylist.filter (ent) -> ent instanceof MovingEnt
+
+    allactors.forEach (ent) =>
+      target = ent
+      targetsize = 8
+      veltrace = new Tracer ent.loc, ent.loc.add(ent.vel)
+      
+      hitbox = new Square target.loc.nsub(targetsize), target.loc.nadd(targetsize)
+      hitbool = HitboxRayIntersect( hitbox, @ )
+      if hitbool
+        normal = @to.sub(@loc).norm()
+        normal = V -normal.y, normal.x
+        target.vel = ricochet target.vel, normal
+	#force an extra move
+        #possibly helps avoid getting stuck in walls?
+        target.loc = target.loc.add target.vel
+  
+  draw: () ->
+    "<line x1=#{@loc.x} y1=#{@loc.y} x2=#{@to.x} y2=#{@to.y} stroke=brown stroke-width=4px />"
+
 class Player extends Actor
 
   constructor: () ->
     super()
     @vel= V 0,1
-    @loc= V 10,20
+    @loc= V 300,100
   draw: () ->
     o = @draworientation()
     return "<circle fill=orange r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
@@ -249,42 +288,11 @@ class Player extends Actor
 randompoint = ->
   return V Math.random(), Math.random()
 
-maketracer = (from,to) ->
-  fromloc = V from.x, from.y
-  toloc = V to.x, to.y
-  trace = new Tracer( fromloc, toloc )
-
-  allLineDefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
-  
-  #allLineDefs.forEach (linedef) ->
-  results = ( getLineIntersection( trace, linedef ) for linedef in allLineDefs )
-  intersections = results.filter (n) -> n isnt null
-  # now we have all wall collisions yo
-  if intersections.length > 0
-    firsthit = intersections.reduce ( prev, curr ) ->
-      if fromloc.dist(prev) > fromloc.dist(curr)
-        return curr
-      else return prev
-    trace = new Tracer( trace.loc , firsthit )
-  
-  allactors = gameworld.entitylist.filter (ent) -> ent instanceof Enemy
-
-  allactors.forEach (ent) ->
-    targetsize = 8
-    hitbox = new Square ent.loc.nsub(targetsize), ent.loc.nadd(targetsize)
-    hitbool= HitboxRayIntersect hitbox, trace
-    if hitbool
-      ent.damage 1
-      bleed V ent.loc.x, ent.loc.y
-      gameworld.addent hitbox
-
-  gameworld.addent trace
-haslineofsight = ( entA, entB ) ->
+nearby = ( entA, entB ) ->
   if entA.loc.dist(entB.loc) < 100
     return true
   else
     return false
-
 
 normtoangle = ( vec ) -> Math.atan2( vec.x, vec.y  )*180/Math.PI
 angletonorm = ( degs ) ->
@@ -299,7 +307,7 @@ class Enemy extends Actor
   draw: () ->
     o = @draworientation()
     basic = "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
-    if haslineofsight( @, dude )
+    if nearby( @, dude )
       size = V 20, 20
       loc = @loc.sub size.ndiv 2 #center
       atts = height:size.x, width:size.y, 'xlink:href':'images/exclamation.svg', x:loc.x, y:loc.y
@@ -310,7 +318,7 @@ class Enemy extends Actor
 
   tick: () ->
     target = dude
-    spotted = haslineofsight @, target
+    spotted = nearby @, target
     if spotted
       norm = @loc.sub(target.loc).norm()
       @dir=normtoangle norm
@@ -345,15 +353,23 @@ keyholdbind 'S', south
 keyholdbind 'D', east
 keytapbind 'R', reset
 
-dudeangle = 0
-turnleft = -> dudeangle+=3
-turnright = -> dudeangle-=3
+tickwaitms = 20
+toggleslowmo = ->
+  if tickwaitms > 20
+    tickwaitms = 20
+  else
+    tickwaitms = 200
+
+keytapbind 'X', toggleslowmo
+
+turnleft = -> dude.dir+=3
+turnright = -> dude.dir-=3
 
 keyholdbind 'H', turnleft
 keyholdbind 'L', turnright
 
 blam = ->
-  aimdirection = angletonorm dudeangle
+  aimdirection = angletonorm dude.dir
   entspraybullets dude, aimdirection, 6
 
 keytapbind 'B', blam
@@ -375,20 +391,11 @@ class Square extends Entity
     size = @bottomright.sub @topleft
     return "<rect x=#{@topleft.x} y=#{@topleft.y} width=#{size.x} height=#{size.y} stroke=magenta fill=none/>"
 
+entDist = ( enta, entb ) -> Math.abs entb.loc.sub enta.loc
+entDir = ( enta, entb ) -> entb.loc.sub(enta.loc).norm()
 
 class World
-  constructor: () ->
-    @entitylist = [ dude ]
-    for i in [0..8]
-      @addent new Enemy()
-    
-    @addent new LineDef V( 0, 300 ) , V( 0, 0 )
-    @addent new LineDef V( 200, 0 ) , V( 0, 0 )
-    @addent new LineDef V( 0, 300 ) , V( 200, 250 )
-    @addent new LineDef V( 200, 0 ) , V( 200, 200 )
-    @addent new LineDef V( 200, 200 ) , V( 400, 200 )
-    @addent new LineDef V( 200, 250 ) , V( 400, 250 )
-  
+  constructor: ( @entitylist = []  ) ->
   addent: ( ent ) ->
     @entitylist.push ent
   reset: ->
@@ -400,10 +407,23 @@ class World
     size = cam.size()
 
     out "<svg id='screenout' width=640 height=480 viewbox='"+camloc.x+" "+camloc.y+" "+size.x+" "+size.y+"'>"
-    out "<g transform='rotate(#{dudeangle},#{dude.loc.x},#{dude.loc.y})'>"
-     
-    @entitylist.forEach( (ent) ->
-      out ent.draw()
+    out "<g transform='rotate(#{dude.dir},#{dude.loc.x},#{dude.loc.y})'>"
+    
+    allLineDefs = @entitylist.filter (ent) -> ent instanceof LineDef
+    restEntities = @entitylist.filter (ent) -> not ( ent instanceof LineDef )
+    allEnemies = @entitylist.filter (ent) -> ent instanceof Enemy
+
+    restEntities = restEntities.filter (ent) -> not ( ent in allEnemies )
+
+    allLineDefs.forEach (ent) -> out ent.draw()
+
+    restEntities.forEach (ent) -> out ent.draw()
+    allEnemies.forEach( (ent) ->
+      trace=firetracer dude.loc, entDir(dude,ent)
+
+      res=trace.checkEnts [ent]
+      if res.length > 0
+        out ent.draw()
     )
     out "</g>"
     out "</svg>"
@@ -411,6 +431,8 @@ class World
   
   tick: ->
     @entitylist.forEach (ent) -> ent.tick()
+World::getLineDefs = () ->
+  return @entitylist.filter (ent) -> ent instanceof LineDef
 
 class Camera
   size: () ->
@@ -480,9 +502,23 @@ HitboxRayIntersect = ( rect, line ) ->
   return true
 
 gameworld=new World
+#demo world
+gameworld.addent dude
+for i in [0..8]
+  gameworld.addent new Enemy()
+    
+gameworld.addent new LineDef V( 0, 300 ) , V( 0, 0 )
+gameworld.addent new LineDef V( 200, 0 ) , V( 0, 0 )
+gameworld.addent new LineDef V( 0, 300 ) , V( 200, 250 )
+gameworld.addent new LineDef V( 200, 0 ) , V( 200, 200 )
+gameworld.addent new LineDef V( 200, 200 ) , V( 400, 200 )
+gameworld.addent new LineDef V( 200, 250 ) , V( 400, 250 )
+
 mainloop = ->
   tickcalls.forEach (func) -> func()
   gameworld.tick()
   gameworld.render()
-  setTimeout mainloop , 20
+  setTimeout mainloop , tickwaitms
 mainloop()
+
+
