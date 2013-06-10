@@ -7,14 +7,16 @@ body.append output
 
 controlpanel= $ "<div style='background-color: silver'></div>"
 body.append controlpanel
-controlpanel.append $ "<p>WASD to move, mouse click to fire. kinda wonky but OH WELL</p>"
+controlpanel.append $ "<p>WASD (or JK) to move, mouse click to fire.</p>"
+controlpanel.append $ "<p>alternatively HL or QE rotate, B shoots in direction you're heading</p>"
+controlpanel.append $ "<p>kinda wonky and mouse control doesn't work correctly in Firefox, or when rotated but OH WELL</p>"
 
 
 outputqueue = []
 out = (text) ->
   outputqueue.push (text)
 flush = () ->
-  output.append outputqueue.join()
+  output.append outputqueue.join(' ')
   outputqueue = []
 
 #xml generation
@@ -88,6 +90,8 @@ class Entity
   kill: () ->
     at = gameworld.entitylist.indexOf @
     gameworld.entitylist.splice at, 1
+  oncollide: ( otherent ) ->
+    #nop
 
 class MovingEnt extends Entity
 
@@ -111,6 +115,21 @@ Blood::gethitbox = () ->
   hitbox = new Square @loc.nsub(targetsize), @loc.nadd(targetsize)
   return hitbox
 
+class HealthPack extends Entity
+  constructor: ( @loc=V(0,0) ) ->
+  onpickup: ( player ) ->
+    player.health+=10
+    @kill()
+  oncollide: ( otherent ) ->
+    if otherent instanceof Player
+      @onpickup otherent
+  draw: () ->
+    return "<rect x=#{@loc.x} y=#{@loc.y} width=8 height=8 fill=blue />"
+HealthPack::gethitbox = () ->
+  targetsize = 4
+  hitbox = new Square @loc.nsub(targetsize), @loc.nadd(targetsize)
+  return hitbox
+
 class Actor extends MovingEnt
   constructor: ( @loc=V(0,0) ) ->
     @health = 10
@@ -129,14 +148,24 @@ class Actor extends MovingEnt
   tick: () ->
     if @health <= 0
       @kill()
+      return
     @movetick()
 
   movetick: () ->
+    @handlecoll()
     newv = @loc.add @vel
     friction = 9/10
     @vel = @vel.nmul friction
     @loc = newv
-
+    
+  handlecoll: () ->
+    allactors = gameworld.entitylist.filter (ent) -> ent instanceof Actor
+    notme = allactors.filter (actor) => actor isnt @
+    notme = notme.concat gameworld.entitylist.filter (ent) -> ent instanceof HealthPack
+    collisions=notme.filter (actor) => boxCollision @.gethitbox(), actor.gethitbox()
+    collisions.forEach ( col ) =>
+      @vel = @vel.add entDir( col, @ )
+      col.oncollide @
 
 class Tracer extends Entity
   constructor: (@loc, @to) ->
@@ -163,9 +192,6 @@ ricochet = ( v, n ) ->
   return vprime
 
 bloodspray = ( loc, vel ) ->
-  bleed loc, vel.mul randompoint()
-  bleed loc, vel.mul randompoint()
-  bleed loc, vel.mul randompoint()
   bleed loc, vel.mul randompoint()
   #velocity.mul( Math.random() )
 
@@ -280,11 +306,11 @@ class Player extends Actor
     o = @draworientation()
     return "<circle fill=orange r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
   tick: () ->
-    @movetick()
+    super()
   move: (x,y) ->
-    @vel.x += x
-    @vel.y += y
-
+    fixedangle = angletonorm @.dir + normtoangle V x,y
+    @vel = @vel.sub fixedangle
+    
 randompoint = ->
   return V Math.random(), Math.random()
 
@@ -365,8 +391,13 @@ keytapbind 'X', toggleslowmo
 turnleft = -> dude.dir+=3
 turnright = -> dude.dir-=3
 
+keyholdbind 'Q', turnleft
+keyholdbind 'E', turnright
 keyholdbind 'H', turnleft
 keyholdbind 'L', turnright
+
+keyholdbind 'K', north
+keyholdbind 'J', south
 
 blam = ->
   aimdirection = angletonorm dude.dir
@@ -427,10 +458,25 @@ class World
     )
     out "</g>"
     out "</svg>"
+    #lol no gui
+    out "<b>#{dude.health} HP</b>"
+    out "<hr />"
+    if @winState()
+      out "<b>YOU WIN!</b>"
+    if @loseState()
+      out "<b>YOU LOSE!</b>"
+    if @winState() and @loseState()
+      out "<b>ACHIEVEMENT GET: PYRRHIC VICTORY</b>"
+
     flush()
   
   tick: ->
     @entitylist.forEach (ent) -> ent.tick()
+World::winState = () ->
+  enemies = @entitylist.filter (ent) -> ent instanceof Enemy
+  return enemies.length == 0
+World::loseState = () ->
+  dude.health <= 0
 World::getLineDefs = () ->
   return @entitylist.filter (ent) -> ent instanceof LineDef
 
@@ -442,6 +488,18 @@ class Camera
     camloc= dude.loc.sub size.ndiv 2
     return camloc
 cam = new Camera
+
+
+boxCollision = ( boxa, boxb ) ->
+  if boxa.bottomright.y < boxb.topleft.y
+    return false
+  if boxa.topleft.y > boxb.bottomright.y
+    return false
+  if boxa.bottomright.x < boxb.topleft.x
+    return false
+  if boxa.topleft.x > boxb.bottomright.x
+    return false
+  return true
 
 #based on an implementation by cortijon
 getLineIntersection = ( linea, lineb ) ->
@@ -514,11 +572,15 @@ gameworld.addent new LineDef V( 200, 0 ) , V( 200, 200 )
 gameworld.addent new LineDef V( 200, 200 ) , V( 400, 200 )
 gameworld.addent new LineDef V( 200, 250 ) , V( 400, 250 )
 
+gameworld.addent new HealthPack randompoint().nmul 400
+gameworld.addent new HealthPack randompoint().nmul 400
+gameworld.addent new HealthPack randompoint().nmul 400
+gameworld.addent new HealthPack randompoint().nmul 400
+
 mainloop = ->
   tickcalls.forEach (func) -> func()
   gameworld.tick()
   gameworld.render()
   setTimeout mainloop , tickwaitms
 mainloop()
-
 
