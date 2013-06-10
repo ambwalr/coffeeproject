@@ -71,8 +71,31 @@ mouselistener = (e) ->
   clickpoint = V e.offsetX, e.offsetY
   clickpoint = clickpoint.add cam.loc()
   aimdirection = clickpoint.sub(dude.loc).norm()
-  firetracer dude.loc, aimdirection
-  entspraybullets dude, aimdirection, 6
+  if editingmode
+    buildwall clickpoint
+  else
+    entspraybullets dude, aimdirection, 6
+
+buildwall = ( clickpoint ) ->
+  linedefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
+  locs=linedefs.map (ld) -> ld.loc
+  tos=linedefs.map (ld) -> ld.to
+  points = locs.concat tos
+  nearestpoint = points.reduce ( prev, curr ) ->
+    if clickpoint.dist(prev) > clickpoint.dist(curr)
+      return curr
+    else return prev
+  start = nearestpoint
+  dir = clickpoint.sub(nearestpoint).norm()
+  angle=Math.round normtoangle(dir)/30
+  dir = angletonorm angle*30
+  offs = dir.norm().nmul 100
+  end = start.add offs
+  end = clickpoint.ndiv 25
+  end = V Math.round(end.x), Math.round(end.y)
+  end = end.nmul 25
+
+  gameworld.addent new LineDef start, end
 
 output.bind('mousedown',{}, mouselistener )
 
@@ -137,7 +160,7 @@ class Actor extends MovingEnt
     @dir = 0
   draworientation: () ->
     normal = angletonorm @dir
-    loc = @loc.add normal.nmul 12
+    loc = @loc.add normal.nmul -12
     return "<circle fill=black r=3 cx=#{loc.x} cy=#{loc.y} />"
   draw: () ->
     return "<circle fill=magenta r=10 cx=#{@loc.x} cy=#{@loc.y} />"
@@ -192,6 +215,9 @@ ricochet = ( v, n ) ->
   return vprime
 
 bloodspray = ( loc, vel ) ->
+  bleed loc, vel.mul randompoint()
+  bleed loc, vel.mul randompoint()
+  bleed loc, vel.mul randompoint()
   bleed loc, vel.mul randompoint()
   #velocity.mul( Math.random() )
 
@@ -309,7 +335,7 @@ class Player extends Actor
     super()
   move: (x,y) ->
     fixedangle = angletonorm @.dir + normtoangle V x,y
-    @vel = @vel.sub fixedangle
+    @vel = @vel.add fixedangle
     
 randompoint = ->
   return V Math.random(), Math.random()
@@ -323,7 +349,7 @@ nearby = ( entA, entB ) ->
 normtoangle = ( vec ) -> Math.atan2( vec.x, vec.y  )*180/Math.PI
 angletonorm = ( degs ) ->
   augh = (degs/360)*Math.PI*2
-  return V(0,0).sub V Math.sin( augh ), Math.cos( augh )
+  return V Math.sin( augh ), Math.cos( augh )
 
 class Enemy extends Actor
   constructor: () ->
@@ -356,7 +382,7 @@ class Enemy extends Actor
   jostle: () ->
     @dir = @dir-1+Math.random() * 3
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
-    @vel = @vel.add angletonorm(@dir).ndiv 50
+    @vel = @vel.sub angletonorm(@dir).ndiv 50
 
 dude = new Player()
 
@@ -379,6 +405,19 @@ keyholdbind 'S', south
 keyholdbind 'D', east
 keytapbind 'R', reset
 
+
+editingmode=false
+wepon1 = ->
+  console.log "cool u got ur first gun, the crowbar"
+  editingmode=true
+wepon2 = ->
+  console.log "guns don't kill people i kill people, with guns"
+  editingmode=false 
+
+keytapbind '1', wepon1
+keytapbind '2', wepon2
+
+
 tickwaitms = 20
 toggleslowmo = ->
   if tickwaitms > 20
@@ -400,7 +439,7 @@ keyholdbind 'K', north
 keyholdbind 'J', south
 
 blam = ->
-  aimdirection = angletonorm dude.dir
+  aimdirection = V(0,0).sub angletonorm dude.dir
   entspraybullets dude, aimdirection, 6
 
 keytapbind 'B', blam
