@@ -2,6 +2,15 @@ body=$("body")
 
 V = _VectorLib.V2D
 
+#xml generation
+tagatts = (attobj) ->
+  attstr=""
+  for k,v of attobj
+    attstr += " #{k}=\"#{v}\""
+  attstr
+tag = (type,att,body="") ->
+  return "<#{type} #{tagatts att}>#{body}</#{type}>"
+
 output = $ "<div id=output></div>"
 body.append output
 
@@ -11,6 +20,11 @@ controlpanel.append $ "<p>WASD (or JK) to move, mouse click to fire.</p>"
 controlpanel.append $ "<p>alternatively HL or QE rotate, B shoots in direction you're heading</p>"
 controlpanel.append $ "<p>kinda wonky and mouse control doesn't work correctly in Firefox, or when rotated but OH WELL</p>"
 
+butt = $ tag "button", undefined , "dump map data"
+butt.click ->
+  console.log JSON.stringify map
+controlpanel.append butt
+
 
 outputqueue = []
 out = (text) ->
@@ -19,14 +33,6 @@ flush = () ->
   output.append outputqueue.join(' ')
   outputqueue = []
 
-#xml generation
-tagatts = (attobj) ->
-  attstr=""
-  for k,v of attobj
-    attstr += " #{k}=\"#{v}\""
-  attstr
-tag = (type,att,body="") ->
-  return "<#{type} #{tagatts att}>#{body}</#{type}>"
 
 holdbindings=[]
 tapbindings=[]
@@ -74,28 +80,26 @@ mouselistener = (e) ->
   if editingmode
     buildwall clickpoint
   else
-    entspraybullets dude, aimdirection, 6
+    entspraybullets dude, aimdirection, 4
 
+map = []
+
+prevclickpos = false
 buildwall = ( clickpoint ) ->
+  if not prevclickpos
+    prevclickpos = clickpoint
+    return
   linedefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
-  locs=linedefs.map (ld) -> ld.loc
-  tos=linedefs.map (ld) -> ld.to
-  points = locs.concat tos
-  nearestpoint = points.reduce ( prev, curr ) ->
-    if clickpoint.dist(prev) > clickpoint.dist(curr)
-      return curr
-    else return prev
-  start = nearestpoint
-  dir = clickpoint.sub(nearestpoint).norm()
-  angle=Math.round normtoangle(dir)/30
-  dir = angletonorm angle*30
-  offs = dir.norm().nmul 100
-  end = start.add offs
+  start = prevclickpos.ndiv 25
+  start = V Math.round(start.x), Math.round(start.y)
+  start = start.nmul 25
+  prevclickpos = false
   end = clickpoint.ndiv 25
   end = V Math.round(end.x), Math.round(end.y)
   end = end.nmul 25
-
-  gameworld.addent new LineDef start, end
+  if start.sub(end).mag() != 0
+    map.push [ start , end ]
+    gameworld.addent new LineDef start, end
 
 output.bind('mousedown',{}, mouselistener )
 
@@ -103,6 +107,62 @@ keyholdbind = (key,funct) ->
   holdbindings[key]=funct
 keytapbind = (key,funct) ->
   tapbindings[key]=funct
+
+boxCollision = ( boxa, boxb ) ->
+  if boxa.bottomright.y < boxb.topleft.y
+    return false
+  if boxa.topleft.y > boxb.bottomright.y
+    return false
+  if boxa.bottomright.x < boxb.topleft.x
+    return false
+  if boxa.topleft.x > boxb.bottomright.x
+    return false
+  return true
+
+#based on an implementation by cortijon
+getLineIntersection = ( linea, lineb ) ->
+  p0 = linea.loc
+  p1 = linea.to
+  p2 = lineb.loc
+  p3 = lineb.to
+  s1 = p1.sub p0
+  s2 = p3.sub p2
+  s = (-s1.y * (p0.x - p2.x) + s1.x * (p0.y - p2.y)) / (-s2.x * s1.y + s1.x * s2.y);
+  t = ( s2.x * (p0.y - p2.y) - s2.y * (p0.x - p2.x)) / (-s2.x * s1.y + s1.x * s2.y);
+  if (s >= 0 && s <= 1 && t >= 0 && t <= 1)
+  #Collision detected
+    return p0.add s1.nmul t
+  return null; #No collision
+
+#based on an implementation by metamal on stackoverflow
+HitboxRayIntersect = ( rect, line ) ->
+  minx = line.loc.x
+  maxx = line.to.x
+  if line.loc.x > line.to.x
+    minx=line.to.x
+    maxx=line.loc.x
+  maxx = Math.min maxx, rect.bottomright.x
+  minx = Math.max minx, rect.topleft.x
+  if minx > maxx
+    return false
+  miny = line.loc.y
+  maxy = line.to.y
+  dx = line.to.x-line.loc.x
+  if Math.abs(dx) > 0.0000001
+    a=(line.to.y-line.loc.y)/dx
+    b=line.loc.y-a*line.loc.x
+    miny=a*minx+b
+    maxy=a*maxx+b
+  if miny > maxy
+    tmp=maxy
+    maxy = miny
+    miny = tmp
+  maxy=Math.min maxy, rect.bottomright.y
+  miny=Math.max miny, rect.topleft.y
+  if miny>maxy
+    return false
+  return true
+
 
 class Entity
   loc=V 0,0
@@ -164,7 +224,7 @@ class Actor extends MovingEnt
     return "<circle fill=black r=3 cx=#{loc.x} cy=#{loc.y} />"
   draw: () ->
     return "<circle fill=magenta r=10 cx=#{@loc.x} cy=#{@loc.y} />"
-
+  
   damage: () ->
     @health -= 1
   
@@ -173,7 +233,7 @@ class Actor extends MovingEnt
       @kill()
       return
     @movetick()
-
+  
   movetick: () ->
     @handlecoll()
     newv = @loc.add @vel
@@ -240,7 +300,7 @@ Tracer::checkEnts = ( entities ) ->
     return hitbool
 
 firetracer = ( fromloc, dir ) ->
-  tracerange = 2000
+  tracerange = 500
   toloc = fromloc.add dir.norm().nmul tracerange
   trace = new Tracer( fromloc, toloc )
   allLineDefs = gameworld.getLineDefs()
@@ -255,49 +315,20 @@ firetracer = ( fromloc, dir ) ->
     trace = new Tracer( trace.loc , firsthit )
   return trace
 
-getTargets = () -> return gameworld.entitylist.filter (ent) -> ent instanceof Enemy
-
-firebullet = ( fromloc, dir ) ->
-  targets = getTargets()
-  #some scatter
-  dir = dir.add( randompoint().nsub(1/2).ndiv(200) ).norm()
-  trace = firetracer fromloc, dir
-  
-  targets = allactors
-  targets.forEach (ent) ->
-    targetsize = 8
-    hitbox = new Square ent.loc.nsub(targetsize), ent.loc.nadd(targetsize)
-    hitbool= HitboxRayIntersect hitbox, trace
-    if hitbool
-      bullethit ent, trace
-
-  gameworld.addent trace
-
 entfirebullet = ( ent, dir ) ->
   bulletrange = 200
-
+  
   fromloc = ent.loc.nadd 0
   #some scatter
   dir = dir.add( randompoint().nsub(1/2).ndiv(4) ).norm()
   trace = firetracer fromloc, dir
-
+  
   allactors = gameworld.entitylist.filter (ent) -> ent instanceof Actor
   targets = allactors.filter (actor) -> actor isnt ent
   hits = trace.checkEnts targets
   hits.forEach (hitent) ->
     bullethit hitent, trace
   gameworld.addent trace
-
-closestEntity = ( vector ) ->
-  minDist = 1000
-  closest = 0
-  gameworld.entitylist.forEach (entity) ->
-    dist = vector.dist entity.loc
-    if dist < minDist
-      closest = entity
-      minDist = dist
-
-  return closest
 
 class LineDef extends Entity
   constructor: (@loc, @to) ->
@@ -330,7 +361,12 @@ class Player extends Actor
     @loc= V 300,100
   draw: () ->
     o = @draworientation()
-    return "<circle fill=orange r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
+    #return "<circle fill=orange r=10 cx=#{@loc.x} cy=#{@loc.y} />"
+    size=32
+    atts = x:@loc.x - size/2 , y:@loc.y - size/2, width: size, height: size
+    atts["xlink:href"]='images/dude.PNG';
+    dudegraphics=tag "image", atts
+    return dudegraphics+o
   tick: () ->
     super()
   move: (x,y) ->
@@ -341,10 +377,7 @@ randompoint = ->
   return V Math.random(), Math.random()
 
 nearby = ( entA, entB ) ->
-  if entA.loc.dist(entB.loc) < 100
-    return true
-  else
-    return false
+  return entA.loc.dist(entB.loc) < 100
 
 normtoangle = ( vec ) -> Math.atan2( vec.x, vec.y  )*180/Math.PI
 angletonorm = ( degs ) ->
@@ -354,7 +387,7 @@ angletonorm = ( degs ) ->
 class Enemy extends Actor
   constructor: () ->
     super()
-    @loc=randompoint().nmul 200
+    @loc=randompoint().nmul 600
     @vel= V 1, 1
   draw: () ->
     o = @draworientation()
@@ -374,26 +407,22 @@ class Enemy extends Actor
     if spotted
       norm = @loc.sub(target.loc).norm()
       @dir=normtoangle norm
-    if spotted and Math.random()*100 < 1
+    if spotted and Math.random()*50 < 1
       entfirebullet @, dude.loc.sub(@loc).norm()
     
     @jostle()
     super()
   jostle: () ->
-    @dir = @dir-1+Math.random() * 3
+    @dir = ( @dir-1 ) + Math.random() * 2
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
-    @vel = @vel.sub angletonorm(@dir).ndiv 50
+    @vel = @vel.sub angletonorm(@dir).ndiv 10
 
 dude = new Player()
 
-north = ->
-  dude.move(0,-1)
-west = ->
-  dude.move(-1,0)
-south = ->
-  dude.move(0,1)
-east = ->
-  dude.move(1,0)
+north = -> dude.move(0,-1)
+west = ->  dude.move(-1,0)
+south = -> dude.move(0,1)
+east = ->  dude.move(1,0)
 
 reset = ->
   console.log "supposed to be resetting now"
@@ -440,7 +469,7 @@ keyholdbind 'J', south
 
 blam = ->
   aimdirection = V(0,0).sub angletonorm dude.dir
-  entspraybullets dude, aimdirection, 6
+  entspraybullets dude, aimdirection, 4
 
 keytapbind 'B', blam
 
@@ -461,8 +490,23 @@ class Square extends Entity
     size = @bottomright.sub @topleft
     return "<rect x=#{@topleft.x} y=#{@topleft.y} width=#{size.x} height=#{size.y} stroke=magenta fill=none/>"
 
-entDist = ( enta, entb ) -> Math.abs entb.loc.sub enta.loc
-entDir = ( enta, entb ) -> entb.loc.sub(enta.loc).norm()
+entDist = ( enta, entb ) -> enta.loc.dist entb.loc
+entDir = ( enta, entb ) -> enta.loc.dir entb.loc
+
+hasLineOfSight = ( enta, entb ) ->
+  trace=firetracer enta.loc, entDir(enta,entb)
+  res=trace.checkEnts [entb]
+  return res.length > 0
+
+lineofsighttowalls = ( ent ) ->
+  allLineDefs = gameworld.entitylist.filter (ent) -> ent instanceof LineDef
+  seenlinedefs = allLineDefs.filter (ld) ->
+      ldcenter = ld.to.add(ld.loc).ndiv(2)
+      dir = ent.loc.dir ldcenter
+      trace = firetracer ent.loc, dir
+      res = getLineIntersection trace, ld
+      return res
+  return seenlinedefs
 
 class World
   constructor: ( @entitylist = []  ) ->
@@ -475,24 +519,24 @@ class World
     
     camloc = cam.loc()
     size = cam.size()
-
+    
     out "<svg id='screenout' width=640 height=480 viewbox='"+camloc.x+" "+camloc.y+" "+size.x+" "+size.y+"'>"
     out "<g transform='rotate(#{dude.dir},#{dude.loc.x},#{dude.loc.y})'>"
     
     allLineDefs = @entitylist.filter (ent) -> ent instanceof LineDef
     restEntities = @entitylist.filter (ent) -> not ( ent instanceof LineDef )
     allEnemies = @entitylist.filter (ent) -> ent instanceof Enemy
-
+    
     restEntities = restEntities.filter (ent) -> not ( ent in allEnemies )
-
-    allLineDefs.forEach (ent) -> out ent.draw()
-
+    
+    allLineDefs = gameworld.getLineDefs()
+    #linedefstodraw = lineofsighttowalls( dude )
+    #linedefstodraw.forEach (ent) -> out ent.draw()
+    allLineDefs.forEach (ld) -> out ld.draw()
+    
     restEntities.forEach (ent) -> out ent.draw()
     allEnemies.forEach( (ent) ->
-      trace=firetracer dude.loc, entDir(dude,ent)
-
-      res=trace.checkEnts [ent]
-      if res.length > 0
+      if hasLineOfSight dude, ent
         out ent.draw()
     )
     out "</g>"
@@ -506,7 +550,7 @@ class World
       out "<b>YOU LOSE!</b>"
     if @winState() and @loseState()
       out "<b>ACHIEVEMENT GET: PYRRHIC VICTORY</b>"
-
+    
     flush()
   
   tick: ->
@@ -528,93 +572,31 @@ class Camera
     return camloc
 cam = new Camera
 
-
-boxCollision = ( boxa, boxb ) ->
-  if boxa.bottomright.y < boxb.topleft.y
-    return false
-  if boxa.topleft.y > boxb.bottomright.y
-    return false
-  if boxa.bottomright.x < boxb.topleft.x
-    return false
-  if boxa.topleft.x > boxb.bottomright.x
-    return false
-  return true
-
-#based on an implementation by cortijon
-getLineIntersection = ( linea, lineb ) ->
-  p0_x = linea.loc.x
-  p0_y = linea.loc.y
-  p1_x = linea.to.x
-  p1_y = linea.to.y
-  p2_x = lineb.loc.x
-  p2_y = lineb.loc.y
-  p3_x = lineb.to.x
-  p3_y = lineb.to.y
-  result=jsgetLineIntersection(p0_x, p0_y, p1_x, p1_y, p2_x, p2_y, p3_x, p3_y)
-  if result isnt null
-    result = V result[0],result[1]
-  return result
-
-jsgetLineIntersection = (p0_x, p0_y, p1_x, p1_y, p2_x, p2_y, p3_x, p3_y) ->
-  s1_x = p1_x - p0_x;
-  s1_y = p1_y - p0_y;
-  s2_x = p3_x - p2_x;
-  s2_y = p3_y - p2_y;
-  s = (-s1_y * (p0_x - p2_x) + s1_x * (p0_y - p2_y)) / (-s2_x * s1_y + s1_x * s2_y);
-  t = ( s2_x * (p0_y - p2_y) - s2_y * (p0_x - p2_x)) / (-s2_x * s1_y + s1_x * s2_y);
-  if (s >= 0 && s <= 1 && t >= 0 && t <= 1)
-  #Collision detected
-    intX = p0_x + (t * s1_x);
-    intY = p0_y + (t * s1_y);
-    return [intX, intY];
-  return null; #No collision
-
-#based on an implementation by metamal on stackoverflow
-HitboxRayIntersect = ( rect, line ) ->
-  minx = line.loc.x
-  maxx = line.to.x
-  if line.loc.x > line.to.x
-    minx=line.to.x
-    maxx=line.loc.x
-  maxx = Math.min maxx, rect.bottomright.x
-  minx = Math.max minx, rect.topleft.x
-  if minx > maxx
-    return false
-  miny = line.loc.y
-  maxy = line.to.y
-  dx = line.to.x-line.loc.x
-  if Math.abs(dx) > 0.0000001
-    a=(line.to.y-line.loc.y)/dx
-    b=line.loc.y-a*line.loc.x
-    miny=a*minx+b
-    maxy=a*maxx+b
-  if miny > maxy
-    tmp=maxy
-    maxy = miny
-    miny = tmp
-  maxy=Math.min maxy, rect.bottomright.y
-  miny=Math.max miny, rect.topleft.y
-  if miny>maxy
-    return false
-  return true
-
 gameworld=new World
 #demo world
 gameworld.addent dude
-for i in [0..8]
+for i in [0..16]
   gameworld.addent new Enemy()
     
-gameworld.addent new LineDef V( 0, 300 ) , V( 0, 0 )
-gameworld.addent new LineDef V( 200, 0 ) , V( 0, 0 )
-gameworld.addent new LineDef V( 0, 300 ) , V( 200, 250 )
-gameworld.addent new LineDef V( 200, 0 ) , V( 200, 200 )
-gameworld.addent new LineDef V( 200, 200 ) , V( 400, 200 )
-gameworld.addent new LineDef V( 200, 250 ) , V( 400, 250 )
+#gameworld.addent new LineDef V( 0, 300 ) , V( 0, 0 )
+#gameworld.addent new LineDef V( 200, 0 ) , V( 0, 0 )
+#gameworld.addent new LineDef V( 0, 300 ) , V( 200, 250 )
+#gameworld.addent new LineDef V( 200, 0 ) , V( 200, 200 )
+#gameworld.addent new LineDef V( 200, 200 ) , V( 400, 200 )
+#gameworld.addent new LineDef V( 200, 250 ) , V( 400, 250 )
 
 gameworld.addent new HealthPack randompoint().nmul 400
 gameworld.addent new HealthPack randompoint().nmul 400
 gameworld.addent new HealthPack randompoint().nmul 400
 gameworld.addent new HealthPack randompoint().nmul 400
+
+success = (data) ->
+  data.forEach (d) ->
+    from = V(0,0).add d[0]
+    to = V(0,0).add d[1]
+    gameworld.addent new LineDef from, to
+
+jQuery.getJSON 'map01.json', success
 
 mainloop = ->
   tickcalls.forEach (func) -> func()
