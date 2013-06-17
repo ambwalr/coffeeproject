@@ -1,6 +1,7 @@
 body=$("body")
 
 V = _VectorLib.V2D
+matrixtransform = _VectorLib.matrixtransform
 
 #xml generation
 tagatts = (attobj) ->
@@ -18,7 +19,7 @@ controlpanel= $ "<div style='background-color: silver'></div>"
 body.append controlpanel
 controlpanel.append $ "<p>WASD (or JK) to move, mouse click to fire.</p>"
 controlpanel.append $ "<p>alternatively HL or QE rotate, B shoots in direction you're heading</p>"
-controlpanel.append $ "<p>kinda wonky and mouse control doesn't work correctly in Firefox, or when rotated but OH WELL</p>"
+controlpanel.append $ "<p>kinda wonky and might not work correctly in all browsers, try a webkit-based browser like safari or chrome</p>"
 
 butt = $ tag "button", undefined , "dump map data"
 butt.click ->
@@ -36,6 +37,7 @@ flush = () ->
 
 holdbindings=[]
 tapbindings=[]
+running = false
 
 tapkeylistener = (e) ->
   key=e.keyCode
@@ -45,12 +47,16 @@ tapkeylistener = (e) ->
     funct()
 tickcalls = []
 holdkeylistener = (e) ->
+  running = e.shiftKey
+  testrun()
   key=e.keyCode
   charkey = String.fromCharCode(key)
   funct = holdbindings[charkey]
   if funct and funct not in tickcalls
     tickcalls.push funct
 releasekeylistener = (e) ->
+  running = e.shiftKey
+  testrun()
   key=e.keyCode
   charkey = String.fromCharCode(key)
   funct = holdbindings[charkey]
@@ -73,9 +79,24 @@ window.ondevicemotion = accellistener
 entspraybullets = ( ent, dir, num ) ->
   [1..num].forEach -> entfirebullet ent,dir
 
+degstorads = ( deg ) -> deg * Math.PI/180
+
+rotate2d = ( vec, deg ) ->
+  theta = degstorads deg
+  matrix=
+  [[Math.cos(theta),-Math.sin(theta)]
+  [Math.sin(theta),Math.cos(theta)]]
+  newv = matrixtransform matrix, [vec.x, vec.y]
+  return V newv[0], newv[1]
+
 mouselistener = (e) ->
   clickpoint = V e.offsetX, e.offsetY
   clickpoint = clickpoint.add cam.loc()
+  
+  poit = clickpoint.sub(dude.loc)
+  adjustedpoint = rotate2d poit, -dude.dir
+  clickpoint = adjustedpoint.add dude.loc
+
   aimdirection = clickpoint.sub(dude.loc).norm()
   if editingmode
     buildwall clickpoint
@@ -107,6 +128,8 @@ keyholdbind = (key,funct) ->
   holdbindings[key]=funct
 keytapbind = (key,funct) ->
   tapbindings[key]=funct
+
+#Collision code
 
 boxCollision = ( boxa, boxb ) ->
   if boxa.bottomright.y < boxb.topleft.y
@@ -163,6 +186,7 @@ HitboxRayIntersect = ( rect, line ) ->
     return false
   return true
 
+#Game ents
 
 class Entity
   loc=V 0,0
@@ -220,7 +244,7 @@ class Actor extends MovingEnt
     @dir = 0
   draworientation: () ->
     normal = angletonorm @dir
-    loc = @loc.add normal.nmul -12
+    loc = @loc.add normal.nmul 12
     return "<circle fill=black r=3 cx=#{loc.x} cy=#{loc.y} />"
   draw: () ->
     return "<circle fill=magenta r=10 cx=#{@loc.x} cy=#{@loc.y} />"
@@ -281,12 +305,15 @@ bloodspray = ( loc, vel ) ->
   bleed loc, vel.mul randompoint()
   #velocity.mul( Math.random() )
 
+Entity::hit = () ->
+
 bullethit = ( ent, trace ) ->
   ent.damage 1
   tracenormal = trace.to.sub(trace.loc).norm()
   #bullets send dudes flying back FOR EXTRA REALISM
-  ent.vel = ent.vel.add tracenormal.nmul 2
+  ent.vel = ent.vel.add tracenormal.nmul 1/2
   bloodspray ent.loc, tracenormal.nmul 30
+  ent.hit()
 
 Actor::gethitbox = () ->
   targetsize = 8
@@ -357,8 +384,8 @@ class Player extends Actor
 
   constructor: () ->
     super()
-    @vel= V 0,1
-    @loc= V 300,100
+    @vel= V 0,0
+    @loc= V 50,-50
   draw: () ->
     o = @draworientation()
     #return "<circle fill=orange r=10 cx=#{@loc.x} cy=#{@loc.y} />"
@@ -371,17 +398,17 @@ class Player extends Actor
     super()
   move: (x,y) ->
     fixedangle = angletonorm @.dir + normtoangle V x,y
-    @vel = @vel.add fixedangle
+    @vel = @vel.add fixedangle.nmul dudespeed
     
 randompoint = ->
   return V Math.random(), Math.random()
 
 nearby = ( entA, entB ) ->
-  return entA.loc.dist(entB.loc) < 100
+  return entA.loc.dist(entB.loc) < 200
 
 normtoangle = ( vec ) -> Math.atan2( vec.x, vec.y  )*180/Math.PI
 angletonorm = ( degs ) ->
-  augh = (degs/360)*Math.PI*2
+  augh = degstorads degs
   return V Math.sin( augh ), Math.cos( augh )
 
 class Enemy extends Actor
@@ -405,19 +432,74 @@ class Enemy extends Actor
     target = dude
     spotted = nearby @, target
     if spotted
-      norm = @loc.sub(target.loc).norm()
+      norm = entDir @, target
       @dir=normtoangle norm
-    if spotted and Math.random()*50 < 1
-      entfirebullet @, dude.loc.sub(@loc).norm()
+    if spotted and Math.random()*30 < 1
+      entfirebullet @, norm
     
     @jostle()
     super()
   jostle: () ->
     @dir = ( @dir-1 ) + Math.random() * 2
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
-    @vel = @vel.sub angletonorm(@dir).ndiv 10
+    @vel = @vel.add angletonorm(@dir).ndiv 10
+
+Enemy::hit = () ->
+  target = dude
+  norm = entDir @, target
+  @dir=normtoangle norm
+
+class Turret extends Actor
+  constructor: () ->
+    super()
+    @loc=randompoint().nmul 600
+    @vel= V 1, 1
+  seesplayer: () ->
+    #hasLineOfSight @, dude
+    #= ( enta, entb ) ->
+    target = dude
+    trace=firetracer @loc, angletonorm(@dir)
+    res=trace.checkEnts [target]
+    return res.length > 0
+
+    
+  draw: () ->
+    o = @draworientation()
+    basic = "<circle fill=yellow r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
+    trace=firetracer @loc, angletonorm(@dir)
+    atts = x1: @loc.x, y1: @loc.y, x2: trace.to.x, y2: trace.to.y, stroke: 'red', 'stroke-width': '1px'
+    laser = tag "line", atts
+    basic += laser
+    if @seesplayer()
+      size = V 20, 20
+      loc = @loc.sub size.ndiv 2 #center
+      atts = height:size.x, width:size.y, 'xlink:href':'images/exclamation.svg', x:loc.x, y:loc.y
+      alert = tag "image", atts
+      return basic + alert
+
+    else
+      return basic
+
+  tick: () ->
+    target = dude
+    spotted = @seesplayer()
+    if not spotted
+      @dir += 1
+    if spotted #flip the fuck out
+      @dir -= 1
+      entfirebullet @, dude.loc.sub(@loc).norm()
+    super()
 
 dude = new Player()
+
+dudespeed = 1
+startrun = () -> dudespeed = 4
+endrun = () -> dudespeed = 0.5
+testrun = () ->
+  if running
+    startrun()
+  else
+    endrun()
 
 north = -> dude.move(0,-1)
 west = ->  dude.move(-1,0)
@@ -468,7 +550,7 @@ keyholdbind 'K', north
 keyholdbind 'J', south
 
 blam = ->
-  aimdirection = V(0,0).sub angletonorm dude.dir
+  aimdirection = angletonorm dude.dir
   entspraybullets dude, aimdirection, 4
 
 keytapbind 'B', blam
@@ -575,8 +657,10 @@ cam = new Camera
 gameworld=new World
 #demo world
 gameworld.addent dude
-for i in [0..16]
+for i in [0..8]
   gameworld.addent new Enemy()
+for i in [0..4]
+  gameworld.addent new Turret()
     
 #gameworld.addent new LineDef V( 0, 300 ) , V( 0, 0 )
 #gameworld.addent new LineDef V( 200, 0 ) , V( 0, 0 )

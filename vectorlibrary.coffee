@@ -47,14 +47,25 @@ Vector::mag = ->
   Math.abs Math.sqrt sq(@x)+sq(@y)
 Vector::norm = -> @ndiv @mag() 
 Vector::dist = (v) -> @sub(v).mag()
+Vector::dir = (v) -> v.sub(@).norm()
 
 Vector::dot2d = (b) -> @x*b.x + @y*b.y
 Vector::dot3d = (b) -> @x*b.x + @y*b.y + @z*b.z
+
+Vector::toarr = -> [ @x, @y, @z ]
+sum = (narr) -> narr.reduce add
+
+matrixtransform = ( matrix, vector ) ->
+  matrix.map (v,i) ->
+    sum v.map (aa,ii) ->
+      aa*vector[ii]
 
 @_VectorLib = {
 V: V
 V3D: V3D
 V2D: V2D
 Vector: Vector
+matrixtransform: matrixtransform
 }
+
 
