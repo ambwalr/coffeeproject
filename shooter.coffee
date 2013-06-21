@@ -17,9 +17,10 @@ body.append output
 
 controlpanel= $ "<div style='background-color: silver'></div>"
 body.append controlpanel
-controlpanel.append $ "<p>WASD (or JK) to move, mouse click to fire.</p>"
-controlpanel.append $ "<p>alternatively HL or QE rotate, B shoots in direction you're heading</p>"
-controlpanel.append $ "<p>kinda wonky and might not work correctly in all browsers, try a webkit-based browser like safari or chrome</p>"
+p = (text) -> controlpanel.append $ tag p,{},text
+p "WASD (or JK) to move, mouse click to fire."
+p "alternatively HL or QE rotate, B shoots in direction you're heading"
+p "kinda wonky and might not work correctly in all browsers, try a webkit-based browser like safari or chrome"
 
 butt = $ tag "button", undefined , "dump map data"
 butt.click ->
@@ -33,6 +34,13 @@ out = (text) ->
 flush = () ->
   output.append outputqueue.join(' ')
   outputqueue = []
+
+class InputHandler
+  constructor: ->
+    @target = dude
+    body.bind 'keydown',{}, tapkeylistener
+    body.bind 'keydown',{}, holdkeylistener
+    body.bind 'keyup',{}, releasekeylistener
 
 
 holdbindings=[]
@@ -63,9 +71,7 @@ releasekeylistener = (e) ->
   if funct and funct in tickcalls
     tickcalls.splice tickcalls.indexOf(funct), 1
 
-body.bind('keydown',{}, tapkeylistener )
-body.bind('keydown',{}, holdkeylistener )
-body.bind('keyup',{}, releasekeylistener )
+control = new InputHandler()
 
 #(mobile) devices with accelerometer
 accellistener = (e) ->
@@ -91,7 +97,10 @@ rotate2d = ( vec, deg ) ->
 
 mouselistener = (e) ->
   clickpoint = V e.offsetX, e.offsetY
-  clickpoint = clickpoint.add cam.loc()
+  clickpoint = clickpoint.div gameworld.dim
+  #format clickpoint is now in a fraction of the screen
+  clickpoint = clickpoint.mul gameworld.camera.size
+  clickpoint = clickpoint.add gameworld.camera.cornerloc()
   
   poit = clickpoint.sub(dude.loc)
   adjustedpoint = rotate2d poit, -dude.dir
@@ -132,14 +141,10 @@ keytapbind = (key,funct) ->
 #Collision code
 
 boxCollision = ( boxa, boxb ) ->
-  if boxa.bottomright.y < boxb.topleft.y
-    return false
-  if boxa.topleft.y > boxb.bottomright.y
-    return false
-  if boxa.bottomright.x < boxb.topleft.x
-    return false
-  if boxa.topleft.x > boxb.bottomright.x
-    return false
+  if boxa.bottomright.y < boxb.topleft.y then return false
+  if boxa.topleft.y > boxb.bottomright.y then return false
+  if boxa.bottomright.x < boxb.topleft.x then return false
+  if boxa.topleft.x > boxb.bottomright.x then return false
   return true
 
 #based on an implementation by cortijon
@@ -194,29 +199,43 @@ class Entity
     #nop
   draw: () ->
     #nop
-  kill: () ->
-    at = gameworld.entitylist.indexOf @
-    gameworld.entitylist.splice at, 1
+  kill: () -> @killme=true
   oncollide: ( otherent ) ->
     #nop
 
 class MovingEnt extends Entity
 
+class Emitter extends Entity
+  constructor: ( @loc ) ->
+    @age = 100
+  tick: () ->
+    @age = @age + 1
+    if @age > 50
+      test.addents bloodspray @loc, V(30,0)
+      @age=0
+
 class Blood extends MovingEnt
   constructor: ( @loc, @vel ) ->
-    @age = 0
+    @age = 100
   draw: () ->
-    "<circle r=4 cx=#{@loc.x} cy=#{@loc.y} fill=red/>"
+    fraction=@age/100
+
+    size = 3+(1-fraction)*4
+    color = "HSLA( 0, 90%, 45%, #{fraction} )" 
+    #"<circle r=#{size} cx=#{@loc.x} cy=#{@loc.y} fill=#{color}/>"
+    atts= r: size, cx:@loc.x, cy:@loc.y, fill:color
+    return tag "circle", atts
   tick: () ->
     @loc = @loc.add @vel
     friction = 0.5
     @vel = @vel.nmul friction
-    @age++
-    if @age > 100
+    @age--
+    if @age <= 0
       @kill()
+
 bleed = ( loc, vel ) ->
   blood = new Blood loc, vel
-  gameworld.addent(blood)
+  return blood
 Blood::gethitbox = () ->
   targetsize = 4
   hitbox = new Square @loc.nsub(targetsize), @loc.nadd(targetsize)
@@ -261,7 +280,7 @@ class Actor extends MovingEnt
   movetick: () ->
     @handlecoll()
     newv = @loc.add @vel
-    friction = 9/10
+    friction = 8/10
     @vel = @vel.nmul friction
     @loc = newv
     
@@ -273,6 +292,12 @@ class Actor extends MovingEnt
     collisions.forEach ( col ) =>
       @vel = @vel.add entDir( col, @ )
       col.oncollide @
+
+randangle = () -> Math.random()*360
+Actor::kill = ->
+  [0..4].forEach => gameworld.addents bloodspray( @loc, angletonorm(randangle()).nmul(30) )
+  [0..4].forEach => gameworld.addents bloodspray( @loc, angletonorm(randangle()).nmul(10) )
+  super()
 
 class Tracer extends Entity
   constructor: (@loc, @to) ->
@@ -299,11 +324,12 @@ ricochet = ( v, n ) ->
   return vprime
 
 bloodspray = ( loc, vel ) ->
-  bleed loc, vel.mul randompoint()
-  bleed loc, vel.mul randompoint()
-  bleed loc, vel.mul randompoint()
-  bleed loc, vel.mul randompoint()
-  #velocity.mul( Math.random() )
+  spray=[]
+  spray.push bleed loc, vel.mul randompoint()
+  spray.push bleed loc, vel.mul randompoint()
+  spray.push bleed loc, vel.mul randompoint()
+  spray.push bleed loc, vel.mul randompoint()
+  return spray
 
 Entity::hit = () ->
 
@@ -312,7 +338,7 @@ bullethit = ( ent, trace ) ->
   tracenormal = trace.to.sub(trace.loc).norm()
   #bullets send dudes flying back FOR EXTRA REALISM
   ent.vel = ent.vel.add tracenormal.nmul 1/2
-  bloodspray ent.loc, tracenormal.nmul 30
+  gameworld.addents bloodspray ent.loc, tracenormal.nmul 30
   ent.hit()
 
 Actor::gethitbox = () ->
@@ -375,7 +401,7 @@ class LineDef extends Entity
         target.vel = ricochet target.vel, normal
 	#force an extra move
         #possibly helps avoid getting stuck in walls?
-        target.loc = target.loc.add target.vel
+        #target.loc = target.loc.add target.vel
   
   draw: () ->
     "<line x1=#{@loc.x} y1=#{@loc.y} x2=#{@to.x} y2=#{@to.y} stroke=brown stroke-width=4px />"
@@ -398,7 +424,10 @@ class Player extends Actor
     super()
   move: (x,y) ->
     fixedangle = angletonorm @.dir + normtoangle V x,y
-    @vel = @vel.add fixedangle.nmul dudespeed
+    @vel = @vel.add fixedangle.nmul dudespeed*2
+    maxspeed = dudespeed*10
+    if @vel.mag() > maxspeed
+      @vel = @vel.norm().nmul maxspeed
     
 randompoint = ->
   return V Math.random(), Math.random()
@@ -411,26 +440,61 @@ angletonorm = ( degs ) ->
   augh = degstorads degs
   return V Math.sin( augh ), Math.cos( augh )
 
+class Ally extends Actor
+  constructor: () ->
+    super()
+    @loc=randompoint().nmul 100
+    @vel= V 1, 1
+    @target = undefined
+  draw: () ->
+    o = @draworientation()
+    size= 10*2
+    color="orange"
+    atts = fill: color, x:@loc.x-size/2, y:@loc.y-size/2, width:size, height:size
+    basic = tag("rect",atts) + o
+    if @target and @seestarget @target
+      alert = exclamation @loc
+      return basic + alert
+    else
+      return basic
+  seestarget: (target) -> hasLineOfSight(@, target)
+  flipout: () ->
+    norm = entDir @, @target
+    @dir=normtoangle norm
+    if Math.random()*20 < 1
+      entfirebullet @, norm
+  tick: () ->
+    if @target == undefined and Math.random()*20 < 1
+      @dir= normtoangle entDir @, dude
+    if @target and @target.killme then @target = undefined
+    if @target
+      norm = entDir @, @target
+      @dir=normtoangle norm
+    if @target and @seestarget(@target) then @flipout()
+    @jostle()
+    super()
+  jostle: () ->
+    @dir = ( @dir-1 ) + Math.random() * 2
+    @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
+    @vel = @vel.add angletonorm(@dir).nmul 1/2
+
 class Enemy extends Actor
   constructor: () ->
     super()
     @loc=randompoint().nmul 600
-    @vel= V 1, 1
+    @vel= V 0, 0
   draw: () ->
     o = @draworientation()
-    basic = "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
-    if nearby( @, dude )
-      size = V 20, 20
-      loc = @loc.sub size.ndiv 2 #center
-      atts = height:size.x, width:size.y, 'xlink:href':'images/exclamation.svg', x:loc.x, y:loc.y
-      alert = tag "image", atts
+    basic = "<circle fill=magenta r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
+    if @seestarget dude
+      alert = exclamation @loc
       return basic + alert
     else
       return basic
-
+  seestarget: ( target ) -> nearby( @, target ) and hasLineOfSight(@, target)
   tick: () ->
     target = dude
-    spotted = nearby @, target
+    spotted = @seestarget target
     if spotted
       norm = entDir @, target
       @dir=normtoangle norm
@@ -444,25 +508,58 @@ class Enemy extends Actor
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
     @vel = @vel.add angletonorm(@dir).ndiv 10
 
-Enemy::hit = () ->
-  target = dude
-  norm = entDir @, target
-  @dir=normtoangle norm
+exclamation = ( loc ) ->
+  size = V 20, 20
+  loc = loc.sub size.ndiv 2 #center
+  atts = height:size.x, width:size.y, 'xlink:href':'images/exclamation.svg', x:loc.x, y:loc.y
+  return tag "image", atts
 
-class Turret extends Actor
+circletag = ( loc, radius, color ) ->
+  atts = cx: loc.x, cy: loc.y, r: radius, fill: color
+  return tag "circle", atts
+
+class Stalker extends Enemy
   constructor: () ->
     super()
     @loc=randompoint().nmul 600
     @vel= V 1, 1
-  seesplayer: () ->
-    #hasLineOfSight @, dude
-    #= ( enta, entb ) ->
+  draw: () ->
+    o = @draworientation()
+    basic = circletag(@loc,10,"purple")+o
+    if @seestarget dude
+      alert = exclamation @loc
+      return basic + alert
+    else
+      return basic
+  seestarget: ( target ) -> hasLineOfSight @, target
+  tick: () ->
     target = dude
-    trace=firetracer @loc, angletonorm(@dir)
-    res=trace.checkEnts [target]
-    return res.length > 0
-
+    spotted = @seestarget target
+    if spotted
+      norm = entDir @, target
+      @dir=normtoangle norm
+      @jostle()
     
+    @jostle()
+    super()
+  jostle: () ->
+    @dir = ( @dir-1 ) + Math.random() * 2
+    @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
+    @vel = @vel.add angletonorm(@dir).ndiv 4
+
+Enemy::hit = () ->
+  target = dude
+  norm = entDir @, target
+  @dir=normtoangle norm
+  
+  allies = gameworld.entitylist.filter (ent) -> ent instanceof Ally
+  allies.forEach (ally) => ally.target = @
+
+class Turret extends Enemy
+  constructor: () ->
+    super()
+    @loc=randompoint().nmul 600
+    @vel= V 1, 1
   draw: () ->
     o = @draworientation()
     basic = "<circle fill=yellow r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
@@ -470,23 +567,22 @@ class Turret extends Actor
     atts = x1: @loc.x, y1: @loc.y, x2: trace.to.x, y2: trace.to.y, stroke: 'red', 'stroke-width': '1px'
     laser = tag "line", atts
     basic += laser
-    if @seesplayer()
-      size = V 20, 20
-      loc = @loc.sub size.ndiv 2 #center
-      atts = height:size.x, width:size.y, 'xlink:href':'images/exclamation.svg', x:loc.x, y:loc.y
-      alert = tag "image", atts
+    if @seestarget dude
+      alert = exclamation @loc
       return basic + alert
 
     else
       return basic
-
+  seestarget: ( target ) ->
+    trace = firetracer @loc, angletonorm @dir
+    res = trace.checkEnts [target]
+    return res.length > 0
   tick: () ->
     target = dude
-    spotted = @seesplayer()
+    spotted = @seestarget target
     if not spotted
       @dir += 1
     if spotted #flip the fuck out
-      @dir -= 1
       entfirebullet @, dude.loc.sub(@loc).norm()
     super()
 
@@ -494,7 +590,7 @@ dude = new Player()
 
 dudespeed = 1
 startrun = () -> dudespeed = 4
-endrun = () -> dudespeed = 0.5
+endrun = () -> dudespeed = 1
 testrun = () ->
   if running
     startrun()
@@ -510,11 +606,14 @@ reset = ->
   console.log "supposed to be resetting now"
   gameworld.reset()
 
+suicide = -> dude.kill()
+
 keyholdbind 'W', north
 keyholdbind 'A', west
 keyholdbind 'S', south
 keyholdbind 'D', east
 keytapbind 'R', reset
+keytapbind 'P', suicide
 
 
 editingmode=false
@@ -592,26 +691,25 @@ lineofsighttowalls = ( ent ) ->
 
 class World
   constructor: ( @entitylist = []  ) ->
-  addent: ( ent ) ->
-    @entitylist.push ent
+    @dim = V 640, 480
+    @camera = new Camera dude #follow the dude
+  addent: ( ent ) -> @entitylist.push ent
+  addents: ( ents ) -> @entitylist = @entitylist.concat ents
   reset: ->
     @constructor()
   render: ->
-    output.html('')
     
-    camloc = cam.loc()
-    size = cam.size()
-    
-    out "<svg id='screenout' width=640 height=480 viewbox='"+camloc.x+" "+camloc.y+" "+size.x+" "+size.y+"'>"
+    camloc = @camera.cornerloc()
+    size = @camera.size
+    out "<svg id='screenout' width=#{@dim.x} height=#{@dim.y} viewbox='"+camloc.x+" "+camloc.y+" "+size.x+" "+size.y+"'>"
     out "<g transform='rotate(#{dude.dir},#{dude.loc.x},#{dude.loc.y})'>"
     
-    allLineDefs = @entitylist.filter (ent) -> ent instanceof LineDef
+    allLineDefs = @getLineDefs()
     restEntities = @entitylist.filter (ent) -> not ( ent instanceof LineDef )
     allEnemies = @entitylist.filter (ent) -> ent instanceof Enemy
     
     restEntities = restEntities.filter (ent) -> not ( ent in allEnemies )
     
-    allLineDefs = gameworld.getLineDefs()
     #linedefstodraw = lineofsighttowalls( dude )
     #linedefstodraw.forEach (ent) -> out ent.draw()
     allLineDefs.forEach (ld) -> out ld.draw()
@@ -623,20 +721,17 @@ class World
     )
     out "</g>"
     out "</svg>"
-    #lol no gui
-    out "<b>#{dude.health} HP</b>"
-    out "<hr />"
-    if @winState()
-      out "<b>YOU WIN!</b>"
-    if @loseState()
-      out "<b>YOU LOSE!</b>"
-    if @winState() and @loseState()
-      out "<b>ACHIEVEMENT GET: PYRRHIC VICTORY</b>"
     
     flush()
   
   tick: ->
+    #prune dead ents
+    @entitylist.filter( (ent) -> ent.killme != undefined ).forEach (ent) =>
+      at = @entitylist.indexOf ent
+      if at >= 0
+        @entitylist.splice at, 1
     @entitylist.forEach (ent) -> ent.tick()
+
 World::winState = () ->
   enemies = @entitylist.filter (ent) -> ent instanceof Enemy
   return enemies.length == 0
@@ -645,23 +740,25 @@ World::loseState = () ->
 World::getLineDefs = () ->
   return @entitylist.filter (ent) -> ent instanceof LineDef
 
-class Camera
-  size: () ->
-    V 640, 480
-  loc: () ->
-    size=@size()
-    camloc= dude.loc.sub size.ndiv 2
+class Camera extends Entity
+  constructor: ( @target=undefined, @loc=V(0,0) ) ->
+    @size = V 640, 480
+  cornerloc: () ->
+    camloc= @target.loc.sub @size.ndiv 2
     return camloc
-cam = new Camera
+  tick: () ->
+    if @target 
+      @loc = @target.loc
 
 gameworld=new World
+
 #demo world
 gameworld.addent dude
-for i in [0..8]
-  gameworld.addent new Enemy()
-for i in [0..4]
-  gameworld.addent new Turret()
-    
+for i in [0..8] then gameworld.addent new Enemy()
+for i in [0..4] then gameworld.addent new Turret()
+for i in [0..4] then gameworld.addent new Stalker()
+for i in [0..4] then gameworld.addent new Ally()
+
 #gameworld.addent new LineDef V( 0, 300 ) , V( 0, 0 )
 #gameworld.addent new LineDef V( 200, 0 ) , V( 0, 0 )
 #gameworld.addent new LineDef V( 0, 300 ) , V( 200, 250 )
@@ -682,10 +779,37 @@ success = (data) ->
 
 jQuery.getJSON 'map01.json', success
 
+class ParticleWorld extends World
+  constructor: ->
+    super()
+    @dim = V 200, 200
+test=new ParticleWorld
+emit = new Emitter V 0,0
+test.addent emit
+test.camera = new Camera emit
+test.camera.size = V 200, 200
+
+drawgui = ->
+  #lol no gui
+  out "<div>"
+  out "<b>#{dude.health} HP</b>"
+  out "<i>#{ gameworld.entitylist.length } entities</i>"
+  won=gameworld.winState()
+  lost=gameworld.loseState()
+  if won then out "<b>YOU WIN!</b>"
+  if lost then out "<b>YOU LOSE!</b>"
+  if won and lost then out "<b>ACHIEVEMENT GET: PYRRHIC VICTORY</b>"
+  out "</div>"
+  flush()
+
 mainloop = ->
+  output.html('')
   tickcalls.forEach (func) -> func()
   gameworld.tick()
   gameworld.render()
+  test.tick()
+  test.render()
+  drawgui()
   setTimeout mainloop , tickwaitms
 mainloop()
 
