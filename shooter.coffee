@@ -222,7 +222,6 @@ class Blood extends MovingEnt
 
     size = 3+(1-fraction)*4
     color = "HSLA( 0, 90%, 45%, #{fraction} )" 
-    #"<circle r=#{size} cx=#{@loc.x} cy=#{@loc.y} fill=#{color}/>"
     atts= r: size, cx:@loc.x, cy:@loc.y, fill:color
     return tag "circle", atts
   tick: () ->
@@ -389,22 +388,36 @@ class LineDef extends Entity
     allactors = gameworld.entitylist.filter (ent) -> ent instanceof MovingEnt
 
     allactors.forEach (ent) =>
+      wallnormal = @to.sub(@loc).norm()
+      wallnormal = V -wallnormal.y, wallnormal.x
       target = ent
-      targetsize = 8
-      veltrace = new Tracer ent.loc, ent.loc.add(ent.vel)
-      
+      targetsize = 10
       hitbox = new Square target.loc.nsub(targetsize), target.loc.nadd(targetsize)
+      velnorm = target.vel.norm()
+      radiustracer = new Tracer target.loc, target.loc.sub wallnormal.nmul targetsize
+      speedtracer = new Tracer target.loc, target.loc.add(target.vel).add(velnorm.nmul(targetsize))
+      intersection = getLineIntersection speedtracer, @
+      #if not intersection
+      #  intersection = getLineIntersection speedtracer, @
       hitbool = HitboxRayIntersect( hitbox, @ )
-      if hitbool
-        normal = @to.sub(@loc).norm()
-        normal = V -normal.y, normal.x
-        target.vel = ricochet target.vel, normal
-	#force an extra move
-        #possibly helps avoid getting stuck in walls?
-        #target.loc = target.loc.add target.vel
+      if intersection
+        target.vel = ricochet target.vel, wallnormal
+        target.vel = target.vel.nmul 1/10
+        a=intersection
+        b=target.loc
+        dirr = a.dir b
+        target.loc = intersection.add dirr.nmul targetsize + (1/100)
   
   draw: () ->
-    "<line x1=#{@loc.x} y1=#{@loc.y} x2=#{@to.x} y2=#{@to.y} stroke=brown stroke-width=4px />"
+    normal = @to.sub(@loc).norm()
+    normal = V -normal.y, normal.x
+    atts = x1:@loc.x, y1:@loc.y, x2:@to.x, y2:@to.y, stroke:"brown", "stroke-width": "4px"
+    wall= tag "line", atts
+    avg = @loc.add(@to).ndiv 2
+    nend = avg.add normal.nmul 10
+    atts = x1:avg.x, y1:avg.y, x2:nend.x, y2:nend.y, stroke:"blue", "stroke-width": "1px"
+    ntag = tag "line", atts
+    return wall+ntag
 
 class Player extends Actor
 
@@ -414,11 +427,11 @@ class Player extends Actor
     @loc= V 50,-50
   draw: () ->
     o = @draworientation()
-    #return "<circle fill=orange r=10 cx=#{@loc.x} cy=#{@loc.y} />"
-    size=32
-    atts = x:@loc.x - size/2 , y:@loc.y - size/2, width: size, height: size
-    atts["xlink:href"]='images/dude.PNG';
-    dudegraphics=tag "image", atts
+    size=10
+    #atts = x:@loc.x - size/2 , y:@loc.y - size/2, width: size, height: size
+    #atts["xlink:href"]='images/dude.PNG';
+    #dudegraphics=tag "image", atts
+    dudegraphics = circletag @loc, size, "orange"
     return dudegraphics+o
   tick: () ->
     super()
@@ -445,34 +458,37 @@ class Ally extends Actor
     super()
     @loc=randompoint().nmul 100
     @vel= V 1, 1
-    @target = undefined
+    @walkgoal = undefined
+    @topthreat = undefined
+    @squadleader = dude
   draw: () ->
     o = @draworientation()
     size= 10*2
-    color="orange"
+    color="pink"
     atts = fill: color, x:@loc.x-size/2, y:@loc.y-size/2, width:size, height:size
     basic = tag("rect",atts) + o
-    if @target and @seestarget @target
+    if @topthreat and @seestarget @topthreat
       alert = exclamation @loc
       return basic + alert
     else
       return basic
   seestarget: (target) -> hasLineOfSight(@, target)
   flipout: () ->
-    norm = entDir @, @target
+    norm = entDir @, @topthreat
     @dir=normtoangle norm
     if Math.random()*20 < 1
       entfirebullet @, norm
   tick: () ->
-    if @target == undefined and Math.random()*20 < 1
-      @dir= normtoangle entDir @, dude
-    if @target and @target.killme then @target = undefined
-    if @target
-      norm = entDir @, @target
-      @dir=normtoangle norm
-    if @target and @seestarget(@target) then @flipout()
-    @jostle()
     super()
+    if @walkgoal
+      @dir= normtoangle @.loc.dir @walkgoal
+      if @.loc.dist(@walkgoal) > 100 then @jostle()
+    if @topthreat == undefined and hasLineOfSight(@, @squadleader )
+      @walkgoal = @squadleader.loc
+    if @topthreat and @topthreat.killme then @topthreat = undefined
+    if @topthreat
+      @walkgoal = @topthreat.loc
+      if @seestarget(@topthreat) then @flipout()
   jostle: () ->
     @dir = ( @dir-1 ) + Math.random() * 2
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
@@ -485,7 +501,7 @@ class Enemy extends Actor
     @vel= V 0, 0
   draw: () ->
     o = @draworientation()
-    basic = "<circle fill=magenta r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
+    basic = "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
     if @seestarget dude
       alert = exclamation @loc
       return basic + alert
@@ -501,8 +517,8 @@ class Enemy extends Actor
     if spotted and Math.random()*30 < 1
       entfirebullet @, norm
     
-    @jostle()
     super()
+    @jostle()
   jostle: () ->
     @dir = ( @dir-1 ) + Math.random() * 2
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
@@ -525,7 +541,7 @@ class Stalker extends Enemy
     @vel= V 1, 1
   draw: () ->
     o = @draworientation()
-    basic = circletag(@loc,10,"purple")+o
+    basic = circletag(@loc,10,"cyan")+o
     if @seestarget dude
       alert = exclamation @loc
       return basic + alert
@@ -533,6 +549,7 @@ class Stalker extends Enemy
       return basic
   seestarget: ( target ) -> hasLineOfSight @, target
   tick: () ->
+    super()
     target = dude
     spotted = @seestarget target
     if spotted
@@ -541,7 +558,6 @@ class Stalker extends Enemy
       @jostle()
     
     @jostle()
-    super()
   jostle: () ->
     @dir = ( @dir-1 ) + Math.random() * 2
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
@@ -553,7 +569,7 @@ Enemy::hit = () ->
   @dir=normtoangle norm
   
   allies = gameworld.entitylist.filter (ent) -> ent instanceof Ally
-  allies.forEach (ally) => ally.target = @
+  allies.forEach (ally) => ally.topthreat = @
 
 class Turret extends Enemy
   constructor: () ->
@@ -562,7 +578,8 @@ class Turret extends Enemy
     @vel= V 1, 1
   draw: () ->
     o = @draworientation()
-    basic = "<circle fill=yellow r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
+    color = "steelblue"
+    basic = "<circle fill=#{color} r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
     trace=firetracer @loc, angletonorm(@dir)
     atts = x1: @loc.x, y1: @loc.y, x2: trace.to.x, y2: trace.to.y, stroke: 'red', 'stroke-width': '1px'
     laser = tag "line", atts
@@ -730,7 +747,10 @@ class World
       at = @entitylist.indexOf ent
       if at >= 0
         @entitylist.splice at, 1
-    @entitylist.forEach (ent) -> ent.tick()
+    allLineDefs = @getLineDefs()
+    restEntities = @entitylist.filter (ent) -> not ( ent instanceof LineDef )
+    allLineDefs.forEach (ent) -> ent.tick()
+    restEntities.forEach (ent) -> ent.tick()
 
 World::winState = () ->
   enemies = @entitylist.filter (ent) -> ent instanceof Enemy
