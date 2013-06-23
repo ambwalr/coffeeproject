@@ -419,6 +419,23 @@ class LineDef extends Entity
     ntag = tag "line", atts
     return wall+ntag
 
+class Polygon extends Entity
+  constructor: (@points) ->
+    @loc = @points[0]
+  draw: () ->
+    pol=@points.map (pt) ->
+      circletag pt, 20, "red"
+    pts=@points.map (pt) -> pt.x+" "+pt.y
+    attpts = pts.join " "
+    atts = points: attpts, fill: "gray"
+    return tag "polygon", atts
+    #atts = x1:@loc.x, y1:@loc.y, x2:@to.x, y2:@to.y, stroke:"brown", "stroke-width": "4px"
+    #wall= tag "line", atts
+    #avg = @loc.add(@to).ndiv 2
+    #nend = avg.add normal.nmul 10
+    #atts = x1:avg.x, y1:avg.y, x2:nend.x, y2:nend.y, stroke:"blue", "stroke-width": "1px"
+    #ntag = tag "line", atts
+
 class Player extends Actor
 
   constructor: () ->
@@ -501,7 +518,9 @@ class Enemy extends Actor
     @vel= V 0, 0
   draw: () ->
     o = @draworientation()
-    basic = "<circle fill=green r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
+    color="green"
+    if not hasLineOfSight @, dude then color = "silver"
+    basic = circletag(@loc,10,color)+o
     if @seestarget dude
       alert = exclamation @loc
       return basic + alert
@@ -541,7 +560,9 @@ class Stalker extends Enemy
     @vel= V 1, 1
   draw: () ->
     o = @draworientation()
-    basic = circletag(@loc,10,"cyan")+o
+    color = "cyan"
+    if not hasLineOfSight @, dude then color = "silver"
+    basic = circletag(@loc,10,color)+o
     if @seestarget dude
       alert = exclamation @loc
       return basic + alert
@@ -579,7 +600,8 @@ class Turret extends Enemy
   draw: () ->
     o = @draworientation()
     color = "steelblue"
-    basic = "<circle fill=#{color} r=10 cx=#{@loc.x} cy=#{@loc.y} />"+o
+    if not hasLineOfSight @, dude then color = "silver"
+    basic = circletag(@loc,10,color)+o
     trace=firetracer @loc, angletonorm(@dir)
     atts = x1: @loc.x, y1: @loc.y, x2: trace.to.x, y2: trace.to.y, stroke: 'red', 'stroke-width': '1px'
     laser = tag "line", atts
@@ -732,10 +754,9 @@ class World
     allLineDefs.forEach (ld) -> out ld.draw()
     
     restEntities.forEach (ent) -> out ent.draw()
-    allEnemies.forEach( (ent) ->
-      if hasLineOfSight dude, ent
-        out ent.draw()
-    )
+    
+    seenEnemies = allEnemies.filter (ent) -> hasLineOfSight dude, ent
+    allEnemies.forEach (ent) -> out ent.draw()
     out "</g>"
     out "</svg>"
     
@@ -792,10 +813,57 @@ gameworld.addent new HealthPack randompoint().nmul 400
 gameworld.addent new HealthPack randompoint().nmul 400
 
 success = (data) ->
+  edges=[]
   data.forEach (d) ->
     from = V(0,0).add d[0]
     to = V(0,0).add d[1]
     gameworld.addent new LineDef from, to
+    edges.push d
+   
+  polys = edgestopolys edges
+  for pol in polys
+    gameworld.addent new Polygon pol
+
+
+vectorindex = ( array, vector ) ->
+  res = -1
+  for v,i in array
+    if vector.dist(v)==0
+      res = i
+  return res
+
+#convert edge soup to polygons
+edgestopolys = ( edges  ) ->
+  polys = []
+  restedges = edges.map (e) ->
+    a=V e[0].x, e[0].y
+    b=V e[1].x, e[1].y
+    return [a,b]
+  for edge,i in restedges
+    a=edge[0]
+    b=edge[1]
+    sploiced = false
+    for pol,i in polys
+      ia = vectorindex pol, a
+      ib = vectorindex pol, b
+      if ia == 0
+        pol.splice 0, 0, b
+        sploiced = true
+        break
+      if ib == 0
+        pol.splice 0, 0, a
+        sploiced = true
+        break
+      if ia == pol.length-1
+        pol.splice pol.length, 0, b
+        sploiced = true
+        break
+      if ib == pol.length-1
+        pol.splice pol.length, 0, a
+        sploiced = true
+        break
+    if sploiced == false then polys.push edge
+  return polys
 
 jQuery.getJSON 'map01.json', success
 
@@ -803,11 +871,11 @@ class ParticleWorld extends World
   constructor: ->
     super()
     @dim = V 200, 200
-test=new ParticleWorld
-emit = new Emitter V 0,0
-test.addent emit
-test.camera = new Camera emit
-test.camera.size = V 200, 200
+#test=new ParticleWorld
+#emit = new Emitter V 0,0
+#test.addent emit
+#test.camera = new Camera emit
+#test.camera.size = V 200, 200
 
 drawgui = ->
   #lol no gui
@@ -827,8 +895,6 @@ mainloop = ->
   tickcalls.forEach (func) -> func()
   gameworld.tick()
   gameworld.render()
-  test.tick()
-  test.render()
   drawgui()
   setTimeout mainloop , tickwaitms
 mainloop()
