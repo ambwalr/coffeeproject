@@ -51,6 +51,7 @@ Vector::dir = (v) -> v.sub(@).norm()
 
 Vector::dot2d = (b) -> @x*b.x + @y*b.y
 Vector::dot3d = (b) -> @x*b.x + @y*b.y + @z*b.z
+Vector::cross2d = (b) -> @.x*b.y-@.y*b.x
 
 Vector::toarr = -> [ @x, @y, @z ]
 sum = (narr) -> narr.reduce add

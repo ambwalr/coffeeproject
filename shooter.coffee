@@ -27,7 +27,6 @@ butt.click ->
   console.log JSON.stringify map
 controlpanel.append butt
 
-
 outputqueue = []
 out = (text) ->
   outputqueue.push (text)
@@ -41,7 +40,6 @@ class InputHandler
     body.bind 'keydown',{}, tapkeylistener
     body.bind 'keydown',{}, holdkeylistener
     body.bind 'keyup',{}, releasekeylistener
-
 
 holdbindings=[]
 tapbindings=[]
@@ -95,6 +93,15 @@ rotate2d = ( vec, deg ) ->
   newv = matrixtransform matrix, [vec.x, vec.y]
   return V newv[0], newv[1]
 
+mousebuild = (clickpoint) ->
+  buildwall clickpoint
+
+mouseshoot = (clickpoint) ->
+  aimdirection = clickpoint.sub(dude.loc).norm()
+  entspraybullets dude, aimdirection, 4
+
+mouseclickaction = mouseshoot
+
 mouselistener = (e) ->
   clickpoint = V e.offsetX, e.offsetY
   clickpoint = clickpoint.div gameworld.dim
@@ -105,12 +112,7 @@ mouselistener = (e) ->
   poit = clickpoint.sub(dude.loc)
   adjustedpoint = rotate2d poit, -dude.dir
   clickpoint = adjustedpoint.add dude.loc
-
-  aimdirection = clickpoint.sub(dude.loc).norm()
-  if editingmode
-    buildwall clickpoint
-  else
-    entspraybullets dude, aimdirection, 4
+  mouseclickaction clickpoint
 
 map = []
 
@@ -133,10 +135,8 @@ buildwall = ( clickpoint ) ->
 
 output.bind('mousedown',{}, mouselistener )
 
-keyholdbind = (key,funct) ->
-  holdbindings[key]=funct
-keytapbind = (key,funct) ->
-  tapbindings[key]=funct
+keyholdbind = (key,funct) -> holdbindings[key]=funct
+keytapbind = (key,funct) -> tapbindings[key]=funct
 
 #Collision code
 
@@ -147,20 +147,16 @@ boxCollision = ( boxa, boxb ) ->
   if boxa.topleft.x > boxb.bottomright.x then return false
   return true
 
-#based on an implementation by cortijon
 getLineIntersection = ( linea, lineb ) ->
-  p0 = linea.loc
-  p1 = linea.to
-  p2 = lineb.loc
-  p3 = lineb.to
-  s1 = p1.sub p0
-  s2 = p3.sub p2
-  s = (-s1.y * (p0.x - p2.x) + s1.x * (p0.y - p2.y)) / (-s2.x * s1.y + s1.x * s2.y);
-  t = ( s2.x * (p0.y - p2.y) - s2.y * (p0.x - p2.x)) / (-s2.x * s1.y + s1.x * s2.y);
-  if (s >= 0 && s <= 1 && t >= 0 && t <= 1)
-  #Collision detected
-    return p0.add s1.nmul t
-  return null; #No collision
+  p = linea.loc
+  r = linea.to.sub p
+  q = lineb.loc
+  s = lineb.to.sub q
+  t = q.sub(p).cross2d(s) / r.cross2d s
+  u = q.sub(p).cross2d(r) / r.cross2d s
+  if t <= 1 and t >= 0 and u <= 1 and u >= 0
+    return p.add r.nmul t
+  return null
 
 #based on an implementation by metamal on stackoverflow
 HitboxRayIntersect = ( rect, line ) ->
@@ -204,6 +200,12 @@ class Entity
     #nop
 
 class MovingEnt extends Entity
+  movetick: () ->
+    @handlecoll()
+    newv = @loc.add @vel
+    friction = 8/10
+    @vel = @vel.nmul friction
+    @loc = newv
 
 class Emitter extends Entity
   constructor: ( @loc ) ->
@@ -216,21 +218,33 @@ class Emitter extends Entity
 
 class Blood extends MovingEnt
   constructor: ( @loc, @vel ) ->
-    @age = 100
+    @orig = @loc
+    @age = 50
   draw: () ->
-    fraction=@age/100
+    fraction=@age/50
 
-    size = 3+(1-fraction)*4
+    size = 1+(1-fraction)*3
     color = "HSLA( 0, 90%, 45%, #{fraction} )" 
+    offs = @loc.sub @orig
+    from = @orig.add offs.nmul 0
+    atts= x1: from.x, y1: from.y, x2: @loc.x, y2: @loc.y, stroke:color, "stroke-width": size*3
+    trail = tag "line", atts
     atts= r: size, cx:@loc.x, cy:@loc.y, fill:color
-    return tag "circle", atts
+    pool = tag "circle", atts
+    return trail
+  handlecoll: -> #nop
   tick: () ->
-    @loc = @loc.add @vel
-    friction = 0.5
-    @vel = @vel.nmul friction
+    @movetick()
     @age--
     if @age <= 0
       @kill()
+
+Blood::movetick = () ->
+  @handlecoll()
+  newv = @loc.add @vel
+  friction = 1/2
+  @vel = @vel.nmul friction
+  @loc = newv
 
 bleed = ( loc, vel ) ->
   blood = new Blood loc, vel
@@ -276,13 +290,6 @@ class Actor extends MovingEnt
       return
     @movetick()
   
-  movetick: () ->
-    @handlecoll()
-    newv = @loc.add @vel
-    friction = 8/10
-    @vel = @vel.nmul friction
-    @loc = newv
-    
   handlecoll: () ->
     allactors = gameworld.entitylist.filter (ent) -> ent instanceof Actor
     notme = allactors.filter (actor) => actor isnt @
@@ -323,12 +330,7 @@ ricochet = ( v, n ) ->
   return vprime
 
 bloodspray = ( loc, vel ) ->
-  spray=[]
-  spray.push bleed loc, vel.mul randompoint()
-  spray.push bleed loc, vel.mul randompoint()
-  spray.push bleed loc, vel.mul randompoint()
-  spray.push bleed loc, vel.mul randompoint()
-  return spray
+  [0..4].map -> bleed loc, vel.mul randompoint()
 
 Entity::hit = () ->
 
@@ -397,9 +399,6 @@ class LineDef extends Entity
       radiustracer = new Tracer target.loc, target.loc.sub wallnormal.nmul targetsize
       speedtracer = new Tracer target.loc, target.loc.add(target.vel).add(velnorm.nmul(targetsize))
       intersection = getLineIntersection speedtracer, @
-      #if not intersection
-      #  intersection = getLineIntersection speedtracer, @
-      hitbool = HitboxRayIntersect( hitbox, @ )
       if intersection
         target.vel = ricochet target.vel, wallnormal
         target.vel = target.vel.nmul 1/10
@@ -442,6 +441,17 @@ class Player extends Actor
     super()
     @vel= V 0,0
     @loc= V 50,-50
+    @walknodes = []
+  drawnodes: () ->
+    wn= @walknodes.map (p) -> circletag p, 4, "gray"
+    points = @walknodes.slice(0)
+    points.unshift(@loc)
+    points = points.map (p) -> p.x+" "+p.y
+    points = points.join " "
+    atts = points: points, stroke: "gray", "stroke-width": "1px", fill: "none"
+    svgline = tag "polyline", atts
+    return wn.join(" ") + svgline
+
   draw: () ->
     o = @draworientation()
     size=10
@@ -449,8 +459,13 @@ class Player extends Actor
     #atts["xlink:href"]='images/dude.PNG';
     #dudegraphics=tag "image", atts
     dudegraphics = circletag @loc, size, "orange"
-    return dudegraphics+o
+    return @drawnodes()+dudegraphics+o
   tick: () ->
+    if @walknodes.length > 0
+      dr = @loc.dir @walknodes[0]
+      @move dr.x, dr.y
+      if @loc.dist(@walknodes[0]) < 10
+        @walknodes.shift()
     super()
   move: (x,y) ->
     fixedangle = angletonorm @.dir + normtoangle V x,y
@@ -458,7 +473,10 @@ class Player extends Actor
     maxspeed = dudespeed*10
     if @vel.mag() > maxspeed
       @vel = @vel.norm().nmul maxspeed
-    
+
+placegonode = (point) ->
+  dude.walknodes.push point
+
 randompoint = ->
   return V Math.random(), Math.random()
 
@@ -658,14 +676,16 @@ keytapbind 'P', suicide
 editingmode=false
 wepon1 = ->
   console.log "cool u got ur first gun, the crowbar"
-  editingmode=true
+  mouseclickaction = mousebuild
 wepon2 = ->
   console.log "guns don't kill people i kill people, with guns"
-  editingmode=false 
+  mouseclickaction = mouseshoot
 
 keytapbind '1', wepon1
 keytapbind '2', wepon2
 
+keytapbind 'G', -> mouseclickaction = placegonode
+keytapbind 'F', -> mouseclickaction = placeattacknode
 
 tickwaitms = 20
 toggleslowmo = ->
@@ -740,7 +760,8 @@ class World
     
     camloc = @camera.cornerloc()
     size = @camera.size
-    out "<svg id='screenout' width=#{@dim.x} height=#{@dim.y} viewbox='"+camloc.x+" "+camloc.y+" "+size.x+" "+size.y+"'>"
+    out "<svg id='screenout' width=#{@dim.x} height=#{@dim.y} "
+    out "viewbox='"+camloc.x+" "+camloc.y+" "+size.x+" "+size.y+"'>"
     out "<g transform='rotate(#{dude.dir},#{dude.loc.x},#{dude.loc.y})'>"
     
     allLineDefs = @getLineDefs()
@@ -749,9 +770,9 @@ class World
     
     restEntities = restEntities.filter (ent) -> not ( ent in allEnemies )
     
-    #linedefstodraw = lineofsighttowalls( dude )
-    #linedefstodraw.forEach (ent) -> out ent.draw()
-    allLineDefs.forEach (ld) -> out ld.draw()
+    linedefstodraw = allLineDefs
+    #lineofsighttowalls( dude )
+    linedefstodraw.forEach (ent) -> out ent.draw()
     
     restEntities.forEach (ent) -> out ent.draw()
     
@@ -824,7 +845,6 @@ success = (data) ->
   for pol in polys
     gameworld.addent new Polygon pol
 
-
 vectorindex = ( array, vector ) ->
   res = -1
   for v,i in array
@@ -846,36 +866,25 @@ edgestopolys = ( edges  ) ->
     for pol,i in polys
       ia = vectorindex pol, a
       ib = vectorindex pol, b
+      len = pol.length
+      if ib == 0 or ia == 0 or ib == len-1 or ia == len-1
+        sploiced = true
       if ia == 0
         pol.splice 0, 0, b
-        sploiced = true
         break
       if ib == 0
         pol.splice 0, 0, a
-        sploiced = true
         break
-      if ia == pol.length-1
-        pol.splice pol.length, 0, b
-        sploiced = true
+      if ia == len-1
+        pol.splice len, 0, b
         break
-      if ib == pol.length-1
-        pol.splice pol.length, 0, a
-        sploiced = true
+      if ib == len-1
+        pol.splice len, 0, a
         break
     if sploiced == false then polys.push edge
   return polys
 
 jQuery.getJSON 'map01.json', success
-
-class ParticleWorld extends World
-  constructor: ->
-    super()
-    @dim = V 200, 200
-#test=new ParticleWorld
-#emit = new Emitter V 0,0
-#test.addent emit
-#test.camera = new Camera emit
-#test.camera.size = V 200, 200
 
 drawgui = ->
   #lol no gui
