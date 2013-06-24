@@ -274,6 +274,16 @@ class Actor extends MovingEnt
     @health = 10
     @vel= V 0,0
     @dir = 0
+    @walknodes = []
+  drawnodes: () ->
+    wn= @walknodes.map (p) -> circletag p, 4, "gray"
+    points = @walknodes.slice(0)
+    points.unshift(@loc)
+    points = points.map (p) -> p.x+" "+p.y
+    points = points.join " "
+    atts = points: points, stroke: "gray", "stroke-width": "1px", fill: "none"
+    svgline = tag "polyline", atts
+    return wn.join(" ") + svgline
   draworientation: () ->
     normal = angletonorm @dir
     loc = @loc.add normal.nmul 12
@@ -299,11 +309,27 @@ class Actor extends MovingEnt
       @vel = @vel.add entDir( col, @ )
       col.oncollide @
 
+Actor::handlenodes = () ->
+  if @walknodes.length > 0
+    dr = @loc.dir @walknodes[0]
+    @move dr.x, dr.y
+  while @walknodes.length > 0 and @loc.dist(@walknodes[0]) < 10
+    @walknodes.shift()
+
 randangle = () -> Math.random()*360
 Actor::kill = ->
   [0..4].forEach => gameworld.addents bloodspray( @loc, angletonorm(randangle()).nmul(30) )
   [0..4].forEach => gameworld.addents bloodspray( @loc, angletonorm(randangle()).nmul(10) )
   super()
+
+Actor::move = (x,y) ->
+  #maxspeed = 4
+  #accel = 4
+  dir = V x,y
+  #@vel = @vel.add dir.nmul accel
+  #if @vel.mag() > maxspeed
+  #  @vel = @vel.norm().nmul maxspeed
+  @dir = normtoangle dir
 
 class Tracer extends Entity
   constructor: (@loc, @to) ->
@@ -353,19 +379,32 @@ Tracer::checkEnts = ( entities ) ->
     hitbool = HitboxRayIntersect hitbox, @
     return hitbool
 
+Tracer::intersectlocs = () ->
+  allLineDefs = gameworld.getLineDefs()
+  results = ( getLineIntersection( @, linedef ) for linedef in allLineDefs )
+  intersections = results.filter (n) -> n isnt null
+  return intersections
+
+Tracer::intersectwalls = () ->
+  allLineDefs = gameworld.getLineDefs()
+  intersections = allLineDefs.filter (ld) => getLineIntersection( @, ld ) isnt null
+  return intersections
+
+firstwallhitloc = ( trace, intersections  ) ->
+  fromloc = trace.loc
+  firsthit = intersections.reduce ( prev, curr ) ->
+    if fromloc.dist(prev) > fromloc.dist(curr)
+      return curr
+    else return prev
+  return firsthit
+
 firetracer = ( fromloc, dir ) ->
   tracerange = 500
   toloc = fromloc.add dir.norm().nmul tracerange
   trace = new Tracer( fromloc, toloc )
-  allLineDefs = gameworld.getLineDefs()
-  results = ( getLineIntersection( trace, linedef ) for linedef in allLineDefs )
-  intersections = results.filter (n) -> n isnt null
-  # now we have all wall collisions yo
+  intersections = trace.intersectlocs()
   if intersections.length > 0
-    firsthit = intersections.reduce ( prev, curr ) ->
-      if fromloc.dist(prev) > fromloc.dist(curr)
-        return curr
-      else return prev
+    firsthit = firstwallhitloc trace, intersections
     trace = new Tracer( trace.loc , firsthit )
   return trace
 
@@ -390,8 +429,7 @@ class LineDef extends Entity
     allactors = gameworld.entitylist.filter (ent) -> ent instanceof MovingEnt
 
     allactors.forEach (ent) =>
-      wallnormal = @to.sub(@loc).norm()
-      wallnormal = V -wallnormal.y, wallnormal.x
+      wallnormal = @normal()
       target = ent
       targetsize = 10
       hitbox = new Square target.loc.nsub(targetsize), target.loc.nadd(targetsize)
@@ -408,8 +446,7 @@ class LineDef extends Entity
         target.loc = intersection.add dirr.nmul targetsize + (1/100)
   
   draw: () ->
-    normal = @to.sub(@loc).norm()
-    normal = V -normal.y, normal.x
+    normal = @normal()
     atts = x1:@loc.x, y1:@loc.y, x2:@to.x, y2:@to.y, stroke:"brown", "stroke-width": "4px"
     wall= tag "line", atts
     avg = @loc.add(@to).ndiv 2
@@ -417,6 +454,10 @@ class LineDef extends Entity
     atts = x1:avg.x, y1:avg.y, x2:nend.x, y2:nend.y, stroke:"blue", "stroke-width": "1px"
     ntag = tag "line", atts
     return wall+ntag
+LineDef::normal = ->
+  wallnormal = @to.sub(@loc).norm()
+  wallnormal = V -wallnormal.y, wallnormal.x
+  return wallnormal
 
 class Polygon extends Entity
   constructor: (@points) ->
@@ -426,14 +467,35 @@ class Polygon extends Entity
       circletag pt, 20, "red"
     pts=@points.map (pt) -> pt.x+" "+pt.y
     attpts = pts.join " "
-    atts = points: attpts, fill: "gray"
+    atts = points: attpts, fill: "skyblue"
     return tag "polygon", atts
-    #atts = x1:@loc.x, y1:@loc.y, x2:@to.x, y2:@to.y, stroke:"brown", "stroke-width": "4px"
-    #wall= tag "line", atts
-    #avg = @loc.add(@to).ndiv 2
-    #nend = avg.add normal.nmul 10
-    #atts = x1:avg.x, y1:avg.y, x2:nend.x, y2:nend.y, stroke:"blue", "stroke-width": "1px"
-    #ntag = tag "line", atts
+
+pointlisttoedges = ( parr ) ->
+  edges=[]
+  prev = parr[parr.length-1]
+  for curr,i in parr
+    edges.push new Tracer prev,curr
+    prev=curr
+  return edges
+
+pointInsidePoly = ( p, poly ) ->
+  # poly type: simply an array of points
+  # a point P is inside a polygon iff the no. of poly edges intersecting
+  # a line from P to an arbitrary point outside the poly is odd
+  trace = new Tracer p, p.add V 10000,0
+  edges=pointlisttoedges poly
+  results = ( getLineIntersection( trace, e ) for e in edges )
+  intersections = results.filter (n) -> n isnt null
+  if intersections.length % 2 == 1
+    return true
+  return false
+
+pointInsideWall = ( pt ) ->
+  allpolys = gameworld.entitylist.filter (ent) -> ent instanceof Polygon
+  for poly in allpolys
+    if pointInsidePoly pt, poly.points
+      return true
+  return false
 
 class Player extends Actor
 
@@ -441,17 +503,6 @@ class Player extends Actor
     super()
     @vel= V 0,0
     @loc= V 50,-50
-    @walknodes = []
-  drawnodes: () ->
-    wn= @walknodes.map (p) -> circletag p, 4, "gray"
-    points = @walknodes.slice(0)
-    points.unshift(@loc)
-    points = points.map (p) -> p.x+" "+p.y
-    points = points.join " "
-    atts = points: points, stroke: "gray", "stroke-width": "1px", fill: "none"
-    svgline = tag "polyline", atts
-    return wn.join(" ") + svgline
-
   draw: () ->
     o = @draworientation()
     size=10
@@ -461,12 +512,8 @@ class Player extends Actor
     dudegraphics = circletag @loc, size, "orange"
     return @drawnodes()+dudegraphics+o
   tick: () ->
-    if @walknodes.length > 0
-      dr = @loc.dir @walknodes[0]
-      @move dr.x, dr.y
-      if @loc.dist(@walknodes[0]) < 10
-        @walknodes.shift()
     super()
+    @handlenodes()
   move: (x,y) ->
     fixedangle = angletonorm @.dir + normtoangle V x,y
     @vel = @vel.add fixedangle.nmul dudespeed*2
@@ -475,7 +522,8 @@ class Player extends Actor
       @vel = @vel.norm().nmul maxspeed
 
 placegonode = (point) ->
-  dude.walknodes.push point
+  if not pointInsideWall point
+    dude.walknodes.push point
 
 randompoint = ->
   return V Math.random(), Math.random()
@@ -501,7 +549,7 @@ class Ally extends Actor
     size= 10*2
     color="pink"
     atts = fill: color, x:@loc.x-size/2, y:@loc.y-size/2, width:size, height:size
-    basic = tag("rect",atts) + o
+    basic = tag("rect",atts) + o + @drawnodes()
     if @topthreat and @seestarget @topthreat
       alert = exclamation @loc
       return basic + alert
@@ -514,16 +562,23 @@ class Ally extends Actor
     if Math.random()*20 < 1
       entfirebullet @, norm
   tick: () ->
-    super()
+    #if @topthreat == undefined and hasLineOfSight(@, @squadleader )
+    @walkgoal = @squadleader.loc
     if @walkgoal
-      @dir= normtoangle @.loc.dir @walkgoal
-      if @.loc.dist(@walkgoal) > 100 then @jostle()
-    if @topthreat == undefined and hasLineOfSight(@, @squadleader )
-      @walkgoal = @squadleader.loc
+      len = @walknodes.length
+      newp=@walkgoal
+      if len > 0
+        if newp.dist(@walknodes[len-1]) > 40
+          @walknodes.push newp
+      else
+        @walknodes.push newp
+      if len >= 10 then @walknodes.shift()
     if @topthreat and @topthreat.killme then @topthreat = undefined
     if @topthreat
-      @walkgoal = @topthreat.loc
       if @seestarget(@topthreat) then @flipout()
+    @jostle()
+    super()
+    @handlenodes()
   jostle: () ->
     @dir = ( @dir-1 ) + Math.random() * 2
     @vel = @vel.add randompoint().nmul(2).nsub(1).ndiv(10)
@@ -889,7 +944,8 @@ jQuery.getJSON 'map01.json', success
 drawgui = ->
   #lol no gui
   out "<div>"
-  out "<b>#{dude.health} HP</b>"
+  out "<b>INF ammo, go hog wild</b> &middot;"
+  out "<b>#{dude.health} HP</b> &middot;"
   out "<i>#{ gameworld.entitylist.length } entities</i>"
   won=gameworld.winState()
   lost=gameworld.loseState()
